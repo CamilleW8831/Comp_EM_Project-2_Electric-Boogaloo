@@ -13,12 +13,15 @@ eta0 = sqrt(mu0/eps0); % impedance of free space [ohms]
 %%% Spatial Indexing %%%
 %%%%%%%%%%%%%%%%%%%%%%%%
 
-Nx = 101; Ny = 101; % number of points
+Nx = 201; Ny = 201; % number of points
 dx = 0.5; dy = 0.5; % spacing
 
-PML_width = 15*dx; % width of PML region
+PML_width = 45*dx; % width of PML region
 PML_atten_dB = 80; % desired PML attenuation (dB)
 PML_order = 2; % polynomial order of PML tapering
+
+NFFF_Npts = 256; % number of points for near field to far field transform
+NFFF_radius = 30.0; % radius of near field to far field sphere
 
 x = (0:(Nx-1)) * dx; % horizontal index, corresponding to the right corner
 y = (0:(Ny-1)) * dy; % vertical index, corresponding to the bottom corner
@@ -75,33 +78,33 @@ sigma_y = zeros(Nx, Ny);
 % construct the four boundary regions which make up the PML
 PML_left = X <= PML_width;
 PML_right = X > (Nx*dx-PML_width);
-%sigma_x(PML_left) = sigma_max * ((PML_width-X(PML_left)) / PML_width).^PML_order;
-%sigma_x(PML_right) = sigma_max * ((PML_width-Nx*dx+X(PML_right)) / PML_width).^PML_order;
+sigma_x(PML_left) = sigma_max * ((PML_width-X(PML_left)) / PML_width).^PML_order;
+sigma_x(PML_right) = sigma_max * ((PML_width-Nx*dx+X(PML_right)) / PML_width).^PML_order;
 PML_top = Y <= PML_width;
 PML_bottom = Y > (Ny*dy-PML_width);
-%sigma_y(PML_top) = sigma_max * ((PML_width-Y(PML_top)) / PML_width).^PML_order;
-%sigma_y(PML_bottom) = sigma_max * ((PML_width-Ny*dy+Y(PML_bottom)) / PML_width).^PML_order;
+sigma_y(PML_top) = sigma_max * ((PML_width-Y(PML_top)) / PML_width).^PML_order;
+sigma_y(PML_bottom) = sigma_max * ((PML_width-Ny*dy+Y(PML_bottom)) / PML_width).^PML_order;
 
-% Optional: check the PML parameters
-figure();
-imagesc(x, y, sigma_x');
-xlabel('x [m]');
-ylabel('y [m]');
-title('\sigma_x');
-axis equal tight;
-set(gca,'YDir','normal');
-set(gcf,'Color','w');
-colorbar;
-
-figure();
-imagesc(x, y, sigma_y');
-xlabel('x [m]');
-ylabel('y [m]');
-title('\sigma_y');
-axis equal tight;
-set(gca,'YDir','normal');
-set(gcf,'Color','w');
-colorbar;
+% % Optional: check the PML parameters
+% figure();
+% imagesc(x, y, sigma_x');
+% xlabel('x [m]');
+% ylabel('y [m]');
+% title('\sigma_x');
+% axis equal tight;
+% set(gca,'YDir','normal');
+% set(gcf,'Color','w');
+% colorbar;
+% 
+% figure();
+% imagesc(x, y, sigma_y');
+% xlabel('x [m]');
+% ylabel('y [m]');
+% title('\sigma_y');
+% axis equal tight;
+% set(gca,'YDir','normal');
+% set(gcf,'Color','w');
+% colorbar;
 
 %%%%%%%%%%%%%%%%%%%%%%%
 %%% Create Geometry %%%
@@ -147,7 +150,7 @@ eps_r(dielectric) = 9; % assign the permittivity to the circle
 ps  = round(Nx/4);  qs = round(Ny/2); % source location
 
 % tapered sinusoid
-f0 = 10e6; % frequency
+f0 = 20e6; % frequency
 w0 = 2*pi*f0; % angular frequency
 sigma_t = 1/f0; % taper time constant
 
@@ -185,22 +188,68 @@ for h = 1:Nt-1 % Nt time steps
     % Update Ez
     for p = 2:Nx-1
         for q = 2:Ny-1
-            %curlH = (Hy(p,q,h+1) - Hy(p-1,q,h+1))/dx ...
-            %      - (Hx(p,q,h+1) - Hx(p,q-1,h+1))/dy;
-            %Ez(p,q,h+1) = (alpha(p,q) * Ez(p,q,h) + curlH - Jz(p,q,h+1)) / beta(p,q);
-
-            Ez_sx(p,q,h+1) = (alpha_x(p,q) * Ez_sx(p,q) + (Hy(p,q,h+1) - Hy(p-1,q,h+1))/dx) / beta_x(p,q);
-            Ez_sy(p,q,h+1) = (alpha_y(p,q) * Ez_sy(p,q) - (Hx(p,q,h+1) - Hx(p,q-1,h+1))/dy) / beta_y(p,q);
+            Ez_sx(p,q,h+1) = (alpha_x(p,q) * Ez_sx(p,q,h) + (Hy(p,q,h+1) - Hy(p-1,q,h+1))/dx) / beta_x(p,q);
+            Ez_sy(p,q,h+1) = (alpha_y(p,q) * Ez_sy(p,q,h) - (Hx(p,q,h+1) - Hx(p,q-1,h+1))/dy) / beta_y(p,q);
+        
+            % combine split fields
+            Ez(p,q,h+1) = Ez_sx(p,q,h+1) + Ez_sy(p,q,h+1);
         end
     end
 
-    % combine split fields
-    Ez = Ez_sx + Ez_sy;
-
     % add the source term
-    Ez_sx(ps,qs,h+1) = Ez_sx(ps,qs,h+1) + 0.5*ft(h+1);
+    Ez(ps,qs,h+1) = Ez(ps,qs,h+1) + ft(h+1);
 
 end
+
+%%%%%%%%%%%%%%%%%%
+%%% Far Fields %%%
+%%%%%%%%%%%%%%%%%%
+
+% compute frequency domain excitation
+ft_freq = fft(ft);
+% frequency index
+F = (1/dt)/Nt*(-Nt/2:Nt/2-1);
+% wavenumber
+k_F = 2*pi*F/c;
+
+% compute circular sampling surface
+phi_samp = linspace(0, 2*pi, NFFF_Npts);
+x_samp = NFFF_radius*cos(phi_samp)+x0;
+y_samp = NFFF_radius*sin(phi_samp)+y0;
+% construct appropriate arrays for interpolation over time simultaneously
+time_i = 1:size(Ez,3);
+time_grid = reshape(time_i, 1, 1, Nt);
+time_shape = ones(1, 1, Nt);
+Xn = X .* time_shape;
+Yn = Y .* time_shape;
+Tn = ones(size(Ez,1), size(Ez,2)) .* time_grid;
+Xs = x_samp .* ones(size(Ez,3),1);
+Ys = y_samp .* ones(size(Ez,3),1);
+Ts = time_i.' .* ones(1, NFFF_Npts);
+
+Ez_NF = interpn(Xn, Yn, Tn, Ez, Xs, Ys, Ts).';
+% convert sampled near fields to cylindrical harmonics and frequency domain
+% both conversions are done simultaneously through 2d fft
+NF_spectrum = fftshift(fft2(Ez_NF));
+% cylindrical harmonic index
+N = (-NFFF_Npts/2:NFFF_Npts/2-1);
+
+% propagate cylindrical harmonics to the far field
+% this is essentially just the asymptotic expansion of the Hankel function
+H = zeros(size(NF_spectrum));
+for ni = 1:numel(N)
+    n = N(ni);
+    if n == 0
+        
+    else
+        H(ni,:) = (1j^n)*(1./besselh(n, 2, k_F*NFFF_radius));
+    end
+end
+FF_spectrum = H .* NF_spectrum;
+% convert to spatial far field
+FF = ifft2(ifftshift(FF_spectrum));
+
+
 
 %%%%%%%%%%%%%%%%
 %%% Playback %%%

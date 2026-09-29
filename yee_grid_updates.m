@@ -20,6 +20,9 @@ PML_width = 45*dx; % width of PML region
 PML_atten_dB = 80; % desired PML attenuation (dB)
 PML_order = 2; % polynomial order of PML tapering
 
+NFFF_Npts = 256; % number of points for near field to far field transform
+NFFF_radius = 30.0; % radius of near field to far field sphere
+
 x = (0:(Nx-1)) * dx; % horizontal index, corresponding to the right corner
 y = (0:(Ny-1)) * dy; % vertical index, corresponding to the bottom corner
 
@@ -197,6 +200,55 @@ for h = 1:Nt-1 % Nt time steps
     Ez(ps,qs,h+1) = Ez(ps,qs,h+1) + ft(h+1);
 
 end
+
+%%%%%%%%%%%%%%%%%%
+%%% Far Fields %%%
+%%%%%%%%%%%%%%%%%%
+
+% compute frequency domain excitation
+ft_freq = fft(ft);
+% frequency index
+F = (1/dt)/Nt*(-Nt/2:Nt/2-1);
+% wavenumber
+k_F = 2*pi*F/c;
+
+% compute circular sampling surface
+phi_samp = linspace(0, 2*pi, NFFF_Npts);
+x_samp = NFFF_radius*cos(phi_samp)+x0;
+y_samp = NFFF_radius*sin(phi_samp)+y0;
+% construct appropriate arrays for interpolation over time simultaneously
+time_i = 1:size(Ez,3);
+time_grid = reshape(time_i, 1, 1, Nt);
+time_shape = ones(1, 1, Nt);
+Xn = X .* time_shape;
+Yn = Y .* time_shape;
+Tn = ones(size(Ez,1), size(Ez,2)) .* time_grid;
+Xs = x_samp .* ones(size(Ez,3),1);
+Ys = y_samp .* ones(size(Ez,3),1);
+Ts = time_i.' .* ones(1, NFFF_Npts);
+
+Ez_NF = interpn(Xn, Yn, Tn, Ez, Xs, Ys, Ts).';
+% convert sampled near fields to cylindrical harmonics and frequency domain
+% both conversions are done simultaneously through 2d fft
+NF_spectrum = fftshift(fft2(Ez_NF));
+% cylindrical harmonic index
+N = (-NFFF_Npts/2:NFFF_Npts/2-1);
+
+% propagate cylindrical harmonics to the far field
+% this is essentially just the asymptotic expansion of the Hankel function
+H = zeros(size(NF_spectrum));
+for ni = 1:numel(N)
+    n = N(ni);
+    H(ni,:) = (1j^n)*(1./besselh(n, 2, k_F*NFFF_radius));
+end
+% hankel functions at dc (k=0) give NaN, so we replace with zeros
+H(isnan(H)) = 0.0;
+
+FF_spectrum = H .* NF_spectrum;
+% convert to spatial far field
+FF = ifft2(ifftshift(FF_spectrum));
+FF = FF ./ ft_freq;
+
 
 %%%%%%%%%%%%%%%%
 %%% Playback %%%
