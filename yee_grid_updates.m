@@ -138,8 +138,9 @@ y0 = floor(y(end)/2);
 D = 20; % diameter [m]
 R = D/2; % radius [m]
 
-dielectric = (X-x0).^2 + (Y-y0).^2 <= R^2;
-eps_r(dielectric) = 9; % assign the permittivity to the circle
+circle = (X-x0).^2 + (Y-y0).^2 <= R^2;
+
+eps_r(circle) = 9; % assign the permittivity to the circle
 
 % % Optional: check the geometry
 % figure();
@@ -168,7 +169,7 @@ eps_r(dielectric) = 9; % assign the permittivity to the circle
 
 % source location
 ps = imin - round(PML_Huygen_cells/2);  
-qs = jmin + round((jmax-jmin)/2);
+qs = 1:Ny;
 
 % tapered sinusoid
 f0 = 20e6; % frequency
@@ -215,7 +216,7 @@ for h = 1:Nt-1 % Nt time steps
 
     % along the bottom edge of the surface whenever q = jmin-1, we will
     % require the term Ez at (p, jmin). This term is corrected such that:
-    % Ez_new(p, jmin) = E_old(p, jmin) - Ei(p, jmin)
+    % Ez_new(p, jmin) = Ez_old(p, jmin) - Ei_z(p, jmin)
     correction_jmin = eps_r(imin:imax,jmin-1).*eps0 ./ (mu0*mu_r(imin:imax,jmin-1)*dy) ...
         .* Ei_z(imin:imax,jmin,h) ./ beta_y(imin:imax,jmin-1);
     %%%
@@ -224,7 +225,7 @@ for h = 1:Nt-1 % Nt time steps
 
     % along the top edge of the surface whenever q = jmax, we will require
     % the term Ez at (p, jmax). This term is corrected such that:
-    % Ez_new(p, jmax) = E_old(p, jmax) - Ei(p, jmax)
+    % Ez_new(p, jmax) = Ez_old(p, jmax) - Ei_z(p, jmax)
     correction_jmax = -eps_r(imin:imax,jmax).*eps0 ./ (mu0*mu_r(imin:imax,jmax)*dy) ...
         .* Ei_z(imin:imax,jmax,h) ./ beta_y(imin:imax,jmax);
     %%%
@@ -247,7 +248,7 @@ for h = 1:Nt-1 % Nt time steps
 
     % along the left edge of the surface whenever p = imin-1, we will require
     % the term Ez at (imin, q). This term is corrected such that:
-    % Ez_new(imin, q) = E_old(imin, q) - Ei(imin, q)
+    % Ez_new(imin, q) = Ez_old(imin, q) - Ei_z(imin, q)
     correction_imin = -eps_r(imin-1,jmin:jmax).*eps0 ./ (mu0*mu_r(imin-1,jmin:jmax)*dx) ...
         .* Ei_z(imin,jmin:jmax,h) ./ beta_x(imin-1,jmin:jmax);
     %%%
@@ -256,7 +257,7 @@ for h = 1:Nt-1 % Nt time steps
 
     % along the right edge of the surface whenever p = imax, we will require
     % the term Ez at (imax, q). This term is corrected such that:
-    % Ez_new(imax, q) = E_old(imax, q) - Ei(imax, q)
+    % Ez_new(imax, q) = Ez_old(imax, q) - Ei_z(imax, q)
     correction_imax = eps_r(imax,jmin:jmax).*eps0 ./ (mu0*mu_r(imax,jmin:jmax)*dx) ...
         .* Ei_z(imax,jmin:jmax,h) ./ beta_x(imax,jmin:jmax);
     %%%%
@@ -328,9 +329,8 @@ for h = 1:Nt-1 % Nt time steps
     Ez_sy(imin:imax,jmax,h+1) = Ez_sy(imin:imax,jmax,h+1) + correction_Ez_jmax;
     Ez(imin:imax,jmax,h+1) = Ez(imin:imax,jmax,h+1) + correction_Ez_jmax;
 
-    % add the source term (only to the incident field, split evenly)
-    Ei_sx(ps,qs,h+1) = Ei_sx(ps,qs,h+1) + 0.5*ft(h+1);
-    Ei_sy(ps,qs,h+1) = Ei_sy(ps,qs,h+1) + 0.5*ft(h+1);
+    % add the source term (only to the incident field)
+    Ei_sx(ps,qs,h+1) = Ei_sx(ps,qs,h+1) + ft(h+1);
     Ei_z(ps,qs,h+1)  = Ei_sx(ps,qs,h+1) + Ei_sy(ps,qs,h+1);
 
     if mod(h,20) == 0   % update in steps 
@@ -394,7 +394,7 @@ FF = FF ./ ft_freq;
 
 figure();
 
-for h = 1:5:Nt
+for h = 1:3:Nt
 
     % plot
     imagesc(x, y, Ez(:,:,h)'); hold on;
@@ -425,7 +425,7 @@ for h = 1:5:Nt
     xticks(0:50:Nx);
     yticks(0:50:Ny);
 
-    % labelling
+    % labeling
     title("E [V/m] at t = " + round((h-1)*dt*1e9) + " ns"); 
     xlabel("x [m]")
     ylabel("y [m]")
