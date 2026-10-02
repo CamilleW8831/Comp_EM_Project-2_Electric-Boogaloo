@@ -31,7 +31,7 @@ imax = floor(Nx/2)+Huygens_cells;
 jmax = floor(Ny/2)+Huygens_cells;
 
 NFFF_Npts = 256; % number of points for near field to far field transform
-NFFF_radius = 5e-2; % radius of near field to far field sphere
+NFFF_radius = 8e-2; % radius of near field to far field sphere
 
 x = (0:(Nx-1)) * dx; % horizontal index, corresponding to the right corner
 y = (0:(Ny-1)) * dy; % vertical index, corresponding to the bottom corner
@@ -339,8 +339,8 @@ for h = 1:Nt-1 % Nt time steps
     Ez(imin:imax,jmax,h+1) = Ez(imin:imax,jmax,h+1) + correction_Ez_jmax;
 
     % add the source term (only to the incident field)
-    Ei_sx(ps,qs,h+1) = 0.5*ft(h+1);
-    Ei_sy(ps,qs,h+1) = 0.5*ft(h+1);
+    Ei_sx(ps,qs,h+1) =  Ei_sx(ps,qs,h+1) + 0.5*ft(h+1);
+    Ei_sx(ps,qs,h+1) =  Ei_sx(ps,qs,h+1) + 0.5*ft(h+1);
     Ei_z(ps,qs,h+1)  = Ei_sx(ps,qs,h+1) + Ei_sy(ps,qs,h+1);
 
     if mod(h,20) == 0   % update in steps 
@@ -379,7 +379,7 @@ Ts = time_i.' .* ones(1, NFFF_Npts);
 Ez_NF = interpn(Xn, Yn, Tn, Ez, Xs, Ys, Ts).';
 % convert sampled near fields to cylindrical harmonics and frequency domain
 % both conversions are done simultaneously through 2d fft
-NF_spectrum = fftshift(fft2(Ez_NF));
+NF_spectrum = fftshift(fft2(Ez_NF)) ./ numel(phi_samp);
 % cylindrical harmonic index
 N = (-NFFF_Npts/2:NFFF_Npts/2-1);
 
@@ -396,17 +396,17 @@ H(isnan(H)) = 0.0;
 FF_spectrum = H .* NF_spectrum;
 % convert to spatial far field
 FF = ifft(ifftshift(FF_spectrum,1),[],1);
-FF = FF ./ ft_freq;
+FF = FF ./ abs(ft_freq);
 
 % get index of f0
 [~, findex] = min(abs(F-f0));
 k0 = k_F(findex);
 figure;
-plot(phi_samp*180/pi, 20*log10(abs(FF(:,findex)))); hold on;
+plot(phi_samp*180/pi, 20*log10(abs(2*pi*FF(:,findex)))); hold on;
 plot(phi_samp*180/pi, 20*log10(bistatic_echo_width_tm_pec(phi_samp, k0, R)));
 legend("Simulated", "Analytic");
-xlabel("Phi (deg)");
-
+xlabel("\phi (deg)");
+ylabel("\sigma(\phi) (dBm)")
 
 %%%%%%%%%%%%%%%%
 %%% Playback %%%
