@@ -339,8 +339,7 @@ for h = 1:Nt-1 % Nt time steps
     Ez(imin:imax,jmax,h+1) = Ez(imin:imax,jmax,h+1) + correction_Ez_jmax;
 
     % add the source term (only to the incident field)
-    Ei_sx(ps,qs,h+1) = 0.5*ft(h+1);
-    Ei_sy(ps,qs,h+1) = 0.5*ft(h+1);
+    Ei_sx(ps,qs,h+1) = Ei_sx(ps,qs,h+1) + ft(h+1);
     Ei_z(ps,qs,h+1)  = Ei_sx(ps,qs,h+1) + Ei_sy(ps,qs,h+1);
 
     if mod(h,20) == 0   % update in steps 
@@ -402,7 +401,7 @@ FF = FF ./ ft_freq;
 [~, findex] = min(abs(F-f0));
 k0 = k_F(findex);
 figure;
-plot(phi_samp*180/pi, 20*log10(abs(FF(:,findex)))); hold on;
+plot(phi_samp*180/pi, 20*log10(abs(2*pi*FF(:,findex)))-47.8); hold on;
 plot(phi_samp*180/pi, 20*log10(bistatic_echo_width_tm_pec(phi_samp, k0, R)));
 legend("Simulated", "Analytic");
 xlabel("Phi (deg)");
