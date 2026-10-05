@@ -13,7 +13,8 @@ eta0 = sqrt(mu0/eps0); % impedance of free space [ohms]
 %%% Spatial Indexing %%%
 %%%%%%%%%%%%%%%%%%%%%%%%
 
-grid_spacings = [32 20 16 12 8 5 3 2 1 0.5 0.3 0.25]*1e-3; % grid size convergence study
+%grid_spacings = [32 20 16 12 8 5 3 2 1 0.5 0.3 0.25]*1e-3; % grid size convergence study
+grid_spacings = [1.0]*1e-3;
 rmse_sigma_error = zeros(size(grid_spacings));
 
 for gridi = 1:numel(grid_spacings)
@@ -428,10 +429,82 @@ end
 % ylabel("\sigma(\phi) (dBm)");
 
 %%%%%%%%%%%%%%%%
-%%% Playback %%%
+%%% Frequency Domain Solution %%%
 %%%%%%%%%%%%%%%%
 
-save("tm_pec_h", "")
+tiledlayout(1, 3);
+
+% compute freq domain of field samples
+Ez_f = fftshift(fft(Ez, [], 3), 3);
+Ezi_f = fftshift(fft(Ei_z, [], 3), 3);
+
+% incident field
+nexttile;
+imagesc(x, y, real(Ezi_f(:,:,findex)')); hold on;
+colormap magma;
+cl = 0.50*max(abs(real(Ezi_f(:,:,findex)')), [], 'all'); % more extreme color gradient for clear visual
+clim([-cl cl]);
+axis equal tight;
+title("Incident E_z");
+plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
+
+plot(x_samp, y_samp, "g:");
+% Optional: Huygens surface
+rectangle('Position', [x(imin), y(jmin), x(imax)-x(imin), y(jmax)-y(jmin)], ...
+    'EdgeColor', 'w', 'LineStyle', '--', 'LineWidth', 1.5);
+% Optional: PML inner boundary
+rectangle('Position', [x(PML_cells+1), y(PML_cells+1), ...
+    x(Nx-PML_cells)-x(PML_cells+1), y(Ny-PML_cells)-y(PML_cells+1)], ...
+    'EdgeColor', 'w', 'LineStyle', ':', 'LineWidth', 1.5);
+
+% scattered field
+mask = (X/dx >= imin-1 & X/dx < imax & Y/dy >= jmin-1 & Y/dy < jmax);
+Ez_f = Ez_f - (mask.*Ezi_f);
+
+nexttile;
+imagesc(x, y, real(Ez_f(:,:,findex)')); hold on;
+colormap magma;
+cl = 0.50*max(abs(real(Ez_f(:,:,findex)')), [], 'all'); % more extreme color gradient for clear visual
+clim([-cl cl]);
+axis equal tight;
+title("Scattered E_z");
+plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
+
+plot(x_samp, y_samp, "g:");
+% Optional: Huygens surface
+rectangle('Position', [x(imin), y(jmin), x(imax)-x(imin), y(jmax)-y(jmin)], ...
+    'EdgeColor', 'w', 'LineStyle', '--', 'LineWidth', 1.5);
+% Optional: PML inner boundary
+rectangle('Position', [x(PML_cells+1), y(PML_cells+1), ...
+    x(Nx-PML_cells)-x(PML_cells+1), y(Ny-PML_cells)-y(PML_cells+1)], ...
+    'EdgeColor', 'w', 'LineStyle', ':', 'LineWidth', 1.5);
+
+% total field
+Ez_t = Ez_f + Ezi_f;
+nexttile;
+imagesc(x, y, real(Ez_t(:,:,findex)')); hold on;
+c = colorbar;
+ylabel(c, "Re(E_z)");
+colormap magma;
+cl = 0.50*max(abs(real(Ez_t(:,:,findex)')), [], 'all'); % more extreme color gradient for clear visual
+clim([-cl cl]);
+axis equal tight;
+title("Total E_z");
+plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
+
+plot(x_samp, y_samp, "g:");
+% Optional: Huygens surface
+rectangle('Position', [x(imin), y(jmin), x(imax)-x(imin), y(jmax)-y(jmin)], ...
+    'EdgeColor', 'w', 'LineStyle', '--', 'LineWidth', 1.5);
+% Optional: PML inner boundary
+rectangle('Position', [x(PML_cells+1), y(PML_cells+1), ...
+    x(Nx-PML_cells)-x(PML_cells+1), y(Ny-PML_cells)-y(PML_cells+1)], ...
+    'EdgeColor', 'w', 'LineStyle', ':', 'LineWidth', 1.5);
+
+
+%%%%%%%%%%%%%%%%
+%%% Playback %%%
+%%%%%%%%%%%%%%%%
 
 figure();
 
