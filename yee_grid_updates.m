@@ -13,16 +13,27 @@ eta0 = sqrt(mu0/eps0); % impedance of free space [ohms]
 %%% Spatial Indexing %%%
 %%%%%%%%%%%%%%%%%%%%%%%%
 
-Nx = 201; Ny = 201; % number of points
-dx = 1.5e-3; dy = dx; % spacing [m]
+grid_spacings = [32 20 16 12 8 5 3 2 1 0.5 0.3 0.25]*1e-3; % grid size convergence study
+rmse_sigma_error = zeros(size(grid_spacings));
 
-PML_cells = 30; % number of cells corrsponding to PML width
-PML_width = PML_cells*dx; % width of PML region
+for gridi = 1:numel(grid_spacings)
+dx = grid_spacings(gridi);
+dy = dx;
+%dx = 2e-3; dy = dx; % spacing [m]
+problem_width = 0.08; % problem width excluding PML cells [m]
+huygens_distance = 0.02; % distance of Huygens surface from center of grid
+
+PML_width = 0.0150;% width of PML region
+
+PML_cells = ceil(PML_width/dx); % number of cells corrsponding to PML width
 PML_atten_dB = 80; % desired PML attenuation (dB)
 PML_order = 2; % polynomial order of PML tapering
 
-PML_Huygen_cells = 55; % separation between the Huygen surface and the PML [cells]
-Huygens_cells = 20;
+Nx = floor((problem_width + PML_cells*2*dx) / dx);
+Ny = Nx;
+
+
+Huygens_cells = floor(huygens_distance/dx);
 % (i0, j0) is the index of the bottom left corner of the Huygen surface
 imin = floor(Nx/2)-Huygens_cells; 
 jmin = floor(Ny/2)-Huygens_cells;
@@ -31,7 +42,7 @@ imax = floor(Nx/2)+Huygens_cells;
 jmax = floor(Ny/2)+Huygens_cells;
 
 NFFF_Npts = 256; % number of points for near field to far field transform
-NFFF_radius = 8e-2; % radius of near field to far field sphere
+NFFF_radius = 3.5e-2; % radius of near field to far field sphere
 
 x = (0:(Nx-1)) * dx; % horizontal index, corresponding to the right corner
 y = (0:(Ny-1)) * dy; % vertical index, corresponding to the bottom corner
@@ -170,7 +181,7 @@ eps_r(circle) = 9; % assign the permittivity to the circle
 %%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % source location
-ps = imin - round(PML_Huygen_cells/2);  
+ps = imin - 1;  
 qs = 1:Ny;
 
 % tapered sinusoid
@@ -388,7 +399,7 @@ N = (-NFFF_Npts/2:NFFF_Npts/2-1);
 H = zeros(size(NF_spectrum));
 for ni = 1:numel(N)
     n = N(ni);
-    H(ni,:) = ((1j)^(-n))*(1./besselh(n, 2, k_F*NFFF_radius));
+    H(ni,:) = ((1j)^(-n))*(1./besselh(n, 2, k_F*NFFF_radius)) .* sqrt(k_F) ./ 2;
 end
 % hankel functions at dc (k=0) give NaN, so we replace with zeros
 H(isnan(H)) = 0.0;
@@ -398,19 +409,29 @@ FF_spectrum = H .* NF_spectrum;
 FF = ifft(ifftshift(FF_spectrum,1),[],1);
 FF = FF ./ abs(ft_freq);
 
-% get index of f0
+% get index of closest computed frequency to f0
 [~, findex] = min(abs(F-f0));
 k0 = k_F(findex);
-figure;
-plot(phi_samp*180/pi, 20*log10(abs(2*pi*FF(:,findex)))); hold on;
-plot(phi_samp*180/pi, 20*log10(bistatic_echo_width_tm_pec(phi_samp, k0, R)));
-legend("Simulated", "Analytic");
-xlabel("\phi (deg)");
-ylabel("\sigma(\phi) (dBm)")
+% bistatic echo width (4*pi^2 corrects for FFT normalization)
+sigma_sim = 4*pi^2*abs(FF(:,findex)).^2;
+sigma_anal = bistatic_echo_width_tm_pec(phi_samp, k0, R);
+% compute rmse error in echo width
+rmse_sigma = sqrt(sum((sigma_sim.' - sigma_anal).^2)) ./ sqrt(sum(sigma_anal.^2));
+rmse_sigma_error(gridi) = rmse_sigma;
+end
+
+% figure;
+% plot(phi_samp*180/pi, 10*log10(sigma_sim)); hold on;
+% plot(phi_samp*180/pi, 10*log10(sigma_ana));
+% legend("Simulated", "Analytic");
+% xlabel("\phi (deg)");
+% ylabel("\sigma(\phi) (dBm)");
 
 %%%%%%%%%%%%%%%%
 %%% Playback %%%
 %%%%%%%%%%%%%%%%
+
+save("tm_pec_h", "")
 
 figure();
 

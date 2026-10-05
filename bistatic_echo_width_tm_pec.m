@@ -5,6 +5,6 @@ function sigma = bistatic_echo_width_tm_pec(phi, k, a)
     sigma = zeros(size(phi));
 
     for p = 1:numel(phi)
-        sigma(p) = 4*a/(k*a) * abs(sum((-1j).^(-n) .* besselj(n, k*a) .* exp(1j*(2*n+1)*pi/4) ./ besselh(n,2,k*a) .* exp(1j*n*phi(p))));
+        sigma(p) = 4*a/k/a * abs(sum((-1j).^(-n) .* besselj(n, k*a) .* exp(1j*(2*n+1)*pi/4) ./ besselh(n,2,k*a) .* exp(1j*n*phi(p)))).^2;
     end
 end
