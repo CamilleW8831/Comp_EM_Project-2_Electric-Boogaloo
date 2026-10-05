@@ -157,7 +157,7 @@ R = D/2; % radius [m]
 circle = (X-x0).^2 + (Y-y0).^2 <= R^2;
 
 %%% ASSSIGN DIELECTRIC OR PEC %%%
-doPEC = true; % choose the PEC or set up the dielectric case
+doPEC = false; % choose the PEC or set up the dielectric case
 Ex_PEC = (X-x0).^2 + (Y+dy/2-y0).^2 <= R^2;
 Ey_PEC = (X+dx/2-x0).^2 + (Y-y0).^2 <= R^2;
 eps_r(circle) = 9; % assign the permittivity to the circle
@@ -534,13 +534,18 @@ hold off;
 %%% Playback %%%
 %%%%%%%%%%%%%%%%
 
-figure();
+h1 = figure();
 
-for h = 1:3:Nt
+for h = 1:6:Nt
 
     % plot
+    figure(h1);
     imagesc(x, y, Hz(:,:,h)'); hold on;
+
+    % Optional: Circular scatterer
     plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
+
+    plot(x_samp, y_samp, "g:");
 
     % Optional: Huygens surface
     rectangle('Position', [x(imin), y(jmin), x(imax)-x(imin), y(jmax)-y(jmin)], ...
@@ -557,15 +562,13 @@ for h = 1:3:Nt
     % colorbar settings
     colorbar;
     colormap magma;
-    cl = 0.5*max(abs(Hz(:))); % more extreme color gradient for clear visual
+    cl = 0.50*max(abs(Hz(:))); % more extreme color gradient for clear visual
     clim([-cl cl]);
 
     % axis & figure settings
     set(gca,'YDir','normal', 'TickLength', [0,0], 'FontName', 'Times', 'FontSize', 18);
     set(gcf, 'Color', 'w')
     axis image;
-    xticks(0:50:Nx);
-    yticks(0:50:Ny);
 
     % labeling
     title("H [A/m] at t = " + round((h-1)*dt*1e9) + " ns"); 

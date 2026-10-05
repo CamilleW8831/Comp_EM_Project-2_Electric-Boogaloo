@@ -15,7 +15,7 @@ eta0 = sqrt(mu0/eps0); % impedance of free space [ohms]
 
 %%% 1. SET UP GRID SPACING %%%
 % grid_spacings = [32 20 16 12 8 5 3 2 1 0.5 0.3 0.25]*1e-3; % grid size convergence study
-grid_spacings = 1.0*1e-3;
+grid_spacings = 0.5*1e-3;
 rmse_sigma_error = zeros(size(grid_spacings));
 
 for gridi = 1:numel(grid_spacings)
@@ -528,11 +528,12 @@ hold off;
 %%% Playback %%%
 %%%%%%%%%%%%%%%%
 
-figure();
+h1 = figure();
 
 for h = 1:6:Nt
 
     % plot
+    figure(h1);
     imagesc(x, y, Ez(:,:,h)'); hold on;
 
     % Optional: Circular scatterer
