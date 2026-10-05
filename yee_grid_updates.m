@@ -134,8 +134,8 @@ doPEC = true;
 % Dielectric circle in the center:
 
 % Coordinates of approximately the center
-x0 = x(end)/2;
-y0 = y(end)/2; 
+x0 = x(floor(Nx/2));
+y0 = y(floor(Ny/2));
 
 D = 1.5e-2; % diameter [m]
 R = D/2; % radius [m]
