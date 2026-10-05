@@ -13,30 +13,47 @@ eta0 = sqrt(mu0/eps0); % impedance of free space [ohms]
 %%% Spatial Indexing %%%
 %%%%%%%%%%%%%%%%%%%%%%%%
 
-Nx = 201; Ny = 201; % number of points
-dx = 0.5; dy = 0.5; % spacing
+%%% 1. SET UP GRID SPACING %%%
+% grid_spacings = [32 20 16 12 8 5 3 2 1 0.5 0.3 0.25]*1e-3; % grid size convergence study
+grid_spacings = 0.5*1e-3;
+rmse_sigma_error = zeros(size(grid_spacings));
 
-PML_cells = 45; % number of cells corrsponding to PML width
-PML_width = PML_cells*dx; % width of PML region
+for gridi = 1:numel(grid_spacings)
+
+dx = grid_spacings(gridi);
+dy = dx;
+% dx = 2e-3; dy = dx; % spacing [m]
+
+%%% 2. PML INDICES AND SOLUTION AREA %%%
+problem_width = 0.08; % problem width excluding PML cells [m]
+
+PML_width = 0.0150; % width of PML region
+PML_cells = ceil(PML_width/dx); % number of cells corresponding to PML width
 PML_atten_dB = 80; % desired PML attenuation (dB)
 PML_order = 2; % polynomial order of PML tapering
 
-PML_Huygen_cells = 10; % separation between the Huygen surface and the PML [cells]
-% (i0, j0) is the index of the bottom left corner of the Huygen surface
-imin = PML_cells + PML_Huygen_cells; 
-jmin = PML_cells + PML_Huygen_cells;
-% (i1, j1) is the index of the top right corner of the Huygen surface
-imax = Nx - PML_cells - PML_Huygen_cells;
-jmax = Ny - PML_cells - PML_Huygen_cells;
+Nx = floor((problem_width + PML_cells*2*dx) / dx);
+Ny = Nx;
 
+%%% 3. HUYGENS SURFACE INDICES %%%
+huygens_distance = 0.02; % distance of Huygens surface from center of grid
+Huygens_cells = floor(huygens_distance/dx);
+
+% (imin, jmin) is the index of the bottom left corner of the Huygen surface
+imin = floor(Nx/2)-Huygens_cells; 
+jmin = floor(Ny/2)-Huygens_cells;
+
+% (imax, jmax) is the index of the top right corner of the Huygen surface
+imax = floor(Nx/2)+Huygens_cells;
+jmax = floor(Ny/2)+Huygens_cells;
+
+%%% 4. FAR-FIELD POINTS %%%
 NFFF_Npts = 256; % number of points for near field to far field transform
-NFFF_radius = 30.0; % radius of near field to far field sphere
+NFFF_radius = 3.5e-2; % radius of near field to far field sphere
 
+%%% 5. DEFINE GRID INDICES %%%
 x = (0:(Nx-1)) * dx; % horizontal index, corresponding to the right corner
 y = (0:(Ny-1)) * dy; % vertical index, corresponding to the bottom corner
-
-Nx = size(x,2); % number of points in x
-Ny = size(y,2); % number of points in y
 
 [X,Y] = ndgrid(x,y); % form the 2D grid
 
@@ -129,19 +146,21 @@ sigma_y(PML_bottom) = sigma_max * ((PML_width-y(end)+Y(PML_bottom)) / PML_width)
 %%% Create Geometry %%%
 %%%%%%%%%%%%%%%%%%%%%%%
 
-% Dielectric circle in the center:
+%%% 1. CREATE THE CIRCULAR MASK %%%
+% Coordinates of approximately the center of the solution domain
+x0 = x(floor(Nx/2));
+y0 = y(floor(Ny/2));
 
-% Coordinates of approximately the center
-x0 = floor(x(end)/2);
-y0 = floor(y(end)/2); 
-
-D = 20; % diameter [m]
+D = 1.5e-2; % diameter [m]
 R = D/2; % radius [m]
 
-dielectric = (X-x0).^2 + (Y-y0).^2 <= R^2;
-% eps_r(dielectric) = 9; % assign the permittivity to the circle
+circle = (X-x0).^2 + (Y-y0).^2 <= R^2;
+
+%%% ASSSIGN DIELECTRIC OR PEC %%%
+doPEC = true; % choose the PEC or set up the dielectric case
 Ex_PEC = (X-x0).^2 + (Y+dy/2-y0).^2 <= R^2;
 Ey_PEC = (X+dx/2-x0).^2 + (Y-y0).^2 <= R^2;
+eps_r(circle) = 9; % assign the permittivity to the circle
 
 % % Optional: check the geometry
 % figure();
@@ -168,17 +187,18 @@ Ey_PEC = (X+dx/2-x0).^2 + (Y-y0).^2 <= R^2;
 %%% Excite the Problem %%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% source location
-ps = imin - round(PML_Huygen_cells/2);  
+%%% 1. SOURCE LOCATION %%%
+ps = imin - 1;  
 qs = 1:Ny;
 
-% tapered sinusoid
-f0 = 20e6; % frequency
+%%% 2. TAPERED SINUSOID, MODULATED GAUSSIAN %%%
+f0 = 10e9; % frequency
 w0 = 2*pi*f0; % angular frequency
-sigma_t = 1/f0; % taper time constant
-
+sigma_t = 2/f0; % taper time constant
 tE = (0:Nt-1)*dt; % time vector, electric field reference
-ft = (1 - exp(-tE/sigma_t)) .* sin(w0*tE); % exciting function
+tOffset = Nt/4*dt; % time offset
+
+ft = exp(-((tE-tOffset)/sigma_t).^2) .* cos(w0*tE); % excite with modulated Gaussian
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Build/Update Equations %%%
@@ -268,9 +288,11 @@ for h = 1:Nt-1 % Nt time steps
     % select the current time step of Ex and Ey
     Ex_tan = Ex(:,:,h+1); Ey_tan = Ey(:,:,h+1);
 
-    % Set the values inside of the PEC = 0
-    Ex_tan(Ex_PEC) = 0; Ex(:,:,h+1) = Ex_tan;
-    Ey_tan(Ey_PEC) = 0;  Ey(:,:,h+1) = Ey_tan;
+    if doPEC
+        % Set the values inside of the PEC = 0
+        Ex_tan(Ex_PEC) = 0; Ex(:,:,h+1) = Ex_tan;
+        Ey_tan(Ey_PEC) = 0;  Ey(:,:,h+1) = Ey_tan;
+    end
 
     % Update Hz
     for p = 2:Nx-1
@@ -348,53 +370,165 @@ for h = 1:Nt-1 % Nt time steps
 end
 close (wb);
 
-% % % % %%%%%%%%%%%%%%%%%%
-% % % % %%% Far Fields %%%
-% % % % %%%%%%%%%%%%%%%%%%
-% % % % 
-% % % % % compute frequency domain excitation
-% % % % ft_freq = fft(ft);
-% % % % % frequency index
-% % % % F = (1/dt)/Nt*(-Nt/2:Nt/2-1);
-% % % % % wavenumber
-% % % % k_F = 2*pi*F/c;
-% % % % 
-% % % % % compute circular sampling surface
-% % % % phi_samp = linspace(0, 2*pi, NFFF_Npts);
-% % % % x_samp = NFFF_radius*cos(phi_samp)+x0;
-% % % % y_samp = NFFF_radius*sin(phi_samp)+y0;
-% % % % % construct appropriate arrays for interpolation over time simultaneously
-% % % % time_i = 1:size(Ez,3);
-% % % % time_grid = reshape(time_i, 1, 1, Nt);
-% % % % time_shape = ones(1, 1, Nt);
-% % % % Xn = X .* time_shape;
-% % % % Yn = Y .* time_shape;
-% % % % Tn = ones(size(Ez,1), size(Ez,2)) .* time_grid;
-% % % % Xs = x_samp .* ones(size(Ez,3),1);
-% % % % Ys = y_samp .* ones(size(Ez,3),1);
-% % % % Ts = time_i.' .* ones(1, NFFF_Npts);
-% % % % 
-% % % % Ez_NF = interpn(Xn, Yn, Tn, Ez, Xs, Ys, Ts).';
-% % % % % convert sampled near fields to cylindrical harmonics and frequency domain
-% % % % % both conversions are done simultaneously through 2d fft
-% % % % NF_spectrum = fftshift(fft2(Ez_NF));
-% % % % % cylindrical harmonic index
-% % % % N = (-NFFF_Npts/2:NFFF_Npts/2-1);
-% % % % 
-% % % % % propagate cylindrical harmonics to the far field
-% % % % % this is essentially just the asymptotic expansion of the Hankel function
-% % % % H = zeros(size(NF_spectrum));
-% % % % for ni = 1:numel(N)
-% % % %     n = N(ni);
-% % % %     H(ni,:) = (1j^n)*(1./besselh(n, 2, k_F*NFFF_radius));
-% % % % end
-% % % % % hankel functions at dc (k=0) give NaN, so we replace with zeros
-% % % % H(isnan(H)) = 0.0;
-% % % % 
-% % % % FF_spectrum = H .* NF_spectrum;
-% % % % % convert to spatial far field
-% % % % FF = ifft2(ifftshift(FF_spectrum));
-% % % % FF = FF ./ ft_freq;
+%%%%%%%%%%%%%%%%%%
+%%% Far Fields %%%
+%%%%%%%%%%%%%%%%%%
+
+% compute frequency domain excitation
+ft_freq = fftshift(fft(ft));
+% frequency index
+F = (1/dt)/Nt*(-Nt/2:Nt/2-1);
+% wavenumber
+k_F = 2*pi*F/c;
+
+% compute circular sampling surface
+phi_samp = linspace(0, 2*pi, NFFF_Npts);
+x_samp = NFFF_radius*cos(phi_samp)+x0;
+y_samp = NFFF_radius*sin(phi_samp)+y0;
+% construct appropriate arrays for interpolation over time simultaneously
+time_i = 1:size(Hz,3);
+time_grid = reshape(time_i, 1, 1, Nt);
+time_shape = ones(1, 1, Nt);
+Xn = X .* time_shape;
+Yn = Y .* time_shape;
+Tn = ones(size(Hz,1), size(Hz,2)) .* time_grid;
+Xs = x_samp .* ones(size(Hz,3),1);
+Ys = y_samp .* ones(size(Hz,3),1);
+Ts = time_i.' .* ones(1, NFFF_Npts);
+
+Hz_NF = interpn(Xn, Yn, Tn, Hz, Xs, Ys, Ts).';
+% convert sampled near fields to cylindrical harmonics and frequency domain
+% both conversions are done simultaneously through 2d fft
+NF_spectrum = fftshift(fft2(Hz_NF)) ./ numel(phi_samp);
+% cylindrical harmonic index
+N = (-NFFF_Npts/2:NFFF_Npts/2-1);
+
+% propagate cylindrical harmonics to the far field
+% this is essentially just the asymptotic expansion of the Hankel function
+H = zeros(size(NF_spectrum));
+for ni = 1:numel(N)
+    n = N(ni);
+    H(ni,:) = ((1j)^(-n))*(1./besselh(n, 2, k_F*NFFF_radius)) .* sqrt(k_F) ./ 2;
+end
+% hankel functions at dc (k=0) give NaN, so we replace with zeros
+H(isnan(H)) = 0.0;
+
+FF_spectrum = H .* NF_spectrum;
+% convert to spatial far field
+FF = ifft(ifftshift(FF_spectrum,1),[],1);
+FF = FF ./ abs(ft_freq);
+
+% get index of closest computed frequency to f0
+[~, findex] = min(abs(F-f0));
+k0 = k_F(findex);
+% bistatic echo width (4*pi^2 corrects for FFT normalization)
+sigma_sim = 4*pi^2*abs(FF(:,findex)).^2;
+sigma_anal = bistatic_echo_width_tm_pec(phi_samp, k0, R);
+% compute rmse error in echo width
+rmse_sigma = sqrt(sum((sigma_sim.' - sigma_anal).^2)) ./ sqrt(sum(sigma_anal.^2));
+rmse_sigma_error(gridi) = rmse_sigma;
+
+% figure;
+% plot(phi_samp*180/pi, 10*log10(sigma_sim)); hold on;
+% plot(phi_samp*180/pi, 10*log10(sigma_ana));
+% legend("Simulated", "Analytic");
+% xlabel("\phi (deg)");
+% ylabel("\sigma(\phi) (dBm)");
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Frequency Domain Solution %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+tiledlayout(1, 3);
+
+%%% 1. FREQUENCY DOMAIN TOTAL, INCIDENT, SCATTERED FIELDS %%%
+Hz_f = fftshift(fft(Hz, [], 3), 3);
+Hzi_f = fftshift(fft(Hi_z, [], 3), 3); % incident
+
+mask = (X/dx >= imin-1 & X/dx < imax & Y/dy >= jmin-1 & Y/dy < jmax);
+Hzs_f = Hz_f - (mask.*Hzi_f); % scattered
+
+Hzt_f = Hzs_f + Hzi_f; % total
+
+%%% 2. PLOT %%%
+tiledlayout(1, 3);
+
+% incident field
+nexttile;
+imagesc(x, y, real(Hzi_f(:,:,findex)')); hold on;
+% Optional: Circular Scatterer
+plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
+% Optional: Huygens surface
+rectangle('Position', [x(imin), y(jmin), x(imax)-x(imin), y(jmax)-y(jmin)], ...
+    'EdgeColor', 'w', 'LineStyle', '--', 'LineWidth', 1.5);
+% Optional: PML inner boundary
+rectangle('Position', [x(PML_cells+1), y(PML_cells+1), ...
+    x(Nx-PML_cells)-x(PML_cells+1), y(Ny-PML_cells)-y(PML_cells+1)], ...
+    'EdgeColor', 'w', 'LineStyle', ':', 'LineWidth', 1.5);
+% axis & figure settings
+set(gca,'YDir','normal', 'TickLength', [0,0], 'FontName', 'Times', 'FontSize', 18);
+set(gcf, 'Color', 'w')
+axis image;
+% colorbar settings
+colormap magma;
+cl = 0.50*max(abs(real(Hzi_f(:,:,findex)')), [], 'all');
+clim([-cl cl]);
+% labeling
+title("Incident H_z");
+xlabel("x [m]")
+ylabel("y [m]")
+
+% scattered field
+nexttile;
+imagesc(x, y, real(Hzs_f(:,:,findex)')); hold on;
+% Optional: Circular Scatterer
+plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
+% Optional: Huygens surface
+rectangle('Position', [x(imin), y(jmin), x(imax)-x(imin), y(jmax)-y(jmin)], ...
+    'EdgeColor', 'w', 'LineStyle', '--', 'LineWidth', 1.5);
+% Optional: PML inner boundary
+rectangle('Position', [x(PML_cells+1), y(PML_cells+1), ...
+    x(Nx-PML_cells)-x(PML_cells+1), y(Ny-PML_cells)-y(PML_cells+1)], ...
+    'EdgeColor', 'w', 'LineStyle', ':', 'LineWidth', 1.5);
+% axis & figure settings
+set(gca,'YDir','normal', 'TickLength', [0,0], 'FontName', 'Times', 'FontSize', 18);
+set(gcf, 'Color', 'w')
+axis image;
+% colorbar settings
+colormap magma;
+cl = 0.50*max(abs(real(Hzs_f(:,:,findex)')), [], 'all');
+clim([-cl cl]);
+% labeling
+title("Scattered H_z");
+xlabel("x [m]")
+ylabel("y [m]")
+
+% total field
+nexttile;
+imagesc(x, y, real(Hzt_f(:,:,findex)')); hold on;
+% Optional: Circular Scatterer
+plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
+% Optional: Huygens surface
+rectangle('Position', [x(imin), y(jmin), x(imax)-x(imin), y(jmax)-y(jmin)], ...
+    'EdgeColor', 'w', 'LineStyle', '--', 'LineWidth', 1.5);
+% Optional: PML inner boundary
+rectangle('Position', [x(PML_cells+1), y(PML_cells+1), ...
+    x(Nx-PML_cells)-x(PML_cells+1), y(Ny-PML_cells)-y(PML_cells+1)], ...
+    'EdgeColor', 'w', 'LineStyle', ':', 'LineWidth', 1.5);
+% axis & figure settings
+set(gca,'YDir','normal', 'TickLength', [0,0], 'FontName', 'Times', 'FontSize', 18);
+set(gcf, 'Color', 'w')
+axis image;
+% colorbar settings
+colormap magma;
+cl = 0.50*max(abs(real(Hzt_f(:,:,findex)')), [], 'all');
+clim([-cl cl]);
+% labeling
+title("Total H_z");
+xlabel("x [m]")
+ylabel("y [m]")
+hold off;
 
 %%%%%%%%%%%%%%%%
 %%% Playback %%%

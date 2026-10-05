@@ -13,43 +13,47 @@ eta0 = sqrt(mu0/eps0); % impedance of free space [ohms]
 %%% Spatial Indexing %%%
 %%%%%%%%%%%%%%%%%%%%%%%%
 
-%grid_spacings = [32 20 16 12 8 5 3 2 1 0.5 0.3 0.25]*1e-3; % grid size convergence study
-grid_spacings = [1.0]*1e-3;
+%%% 1. SET UP GRID SPACING %%%
+% grid_spacings = [32 20 16 12 8 5 3 2 1 0.5 0.3 0.25]*1e-3; % grid size convergence study
+grid_spacings = 1.0*1e-3;
 rmse_sigma_error = zeros(size(grid_spacings));
 
 for gridi = 1:numel(grid_spacings)
+
 dx = grid_spacings(gridi);
 dy = dx;
-%dx = 2e-3; dy = dx; % spacing [m]
+% dx = 2e-3; dy = dx; % spacing [m]
+
+%%% 2. PML INDICES AND SOLUTION AREA %%%
 problem_width = 0.08; % problem width excluding PML cells [m]
-huygens_distance = 0.02; % distance of Huygens surface from center of grid
 
-PML_width = 0.0150;% width of PML region
-
-PML_cells = ceil(PML_width/dx); % number of cells corrsponding to PML width
+PML_width = 0.0150; % width of PML region
+PML_cells = ceil(PML_width/dx); % number of cells corresponding to PML width
 PML_atten_dB = 80; % desired PML attenuation (dB)
 PML_order = 2; % polynomial order of PML tapering
 
 Nx = floor((problem_width + PML_cells*2*dx) / dx);
 Ny = Nx;
 
-
+%%% 3. HUYGENS SURFACE INDICES %%%
+huygens_distance = 0.02; % distance of Huygens surface from center of grid
 Huygens_cells = floor(huygens_distance/dx);
-% (i0, j0) is the index of the bottom left corner of the Huygen surface
+
+% (imin, jmin) is the index of the bottom left corner of the Huygen surface
 imin = floor(Nx/2)-Huygens_cells; 
 jmin = floor(Ny/2)-Huygens_cells;
-% (i1, j1) is the index of the top right corner of the Huygen surface
+
+% (imax, jmax) is the index of the top right corner of the Huygen surface
 imax = floor(Nx/2)+Huygens_cells;
 jmax = floor(Ny/2)+Huygens_cells;
 
+%%% 4. FAR-FIELD POINTS %%%
 NFFF_Npts = 256; % number of points for near field to far field transform
 NFFF_radius = 3.5e-2; % radius of near field to far field sphere
 
+%%% 5. DEFINE GRID INDICES %%%
 x = (0:(Nx-1)) * dx; % horizontal index, corresponding to the right corner
 y = (0:(Ny-1)) * dy; % vertical index, corresponding to the bottom corner
-
-Nx = size(x,2); % number of points in x
-Ny = size(y,2); % number of points in y
 
 [X,Y] = ndgrid(x,y); % form the 2D grid
 
@@ -68,7 +72,8 @@ Ny = size(y,2); % number of points in y
 %%%%%%%%%%%%%%%%%%%%%
 
 stability_factor = 0.9; % scale factor on CFL condition (<=1 is stable)
-% time step s.t. stability criterion is met
+
+% time step s.t. stability criterion is met:
 dt = stability_factor / (c * sqrt(1/dx^2 + 1/dy^2));
 
 Nt = 1000; % number of time steps
@@ -90,7 +95,6 @@ Ez_sx = zeros(Nx, Ny, Nt); % split E-field x component (PML)
 Ez_sy = zeros(Nx, Ny, Nt); % split E-field y component (PML)
 
 Hx = zeros(Nx, Ny, Nt); Hy = zeros(Nx, Ny, Nt); % H-field
-% Jz = zeros(Nx, Ny, Nt); % Optional: current
 
 %%% Material values
 eps_r = ones(Nx, Ny); % permittivity 
@@ -142,10 +146,8 @@ sigma_y(PML_bottom) = sigma_max * ((PML_width-y(end)+Y(PML_bottom)) / PML_width)
 %%% Create Geometry %%%
 %%%%%%%%%%%%%%%%%%%%%%%
 
-doPEC = true;
-% Dielectric circle in the center:
-
-% Coordinates of approximately the center
+%%% 1. CREATE THE CIRCULAR MASK %%%
+% Coordinates of approximately the center of the solution domain
 x0 = x(floor(Nx/2));
 y0 = y(floor(Ny/2));
 
@@ -154,7 +156,9 @@ R = D/2; % radius [m]
 
 circle = (X-x0).^2 + (Y-y0).^2 <= R^2;
 
-eps_r(circle) = 9; % assign the permittivity to the circle
+%%% ASSSIGN DIELECTRIC OR PEC %%%
+doPEC = false; % choose the PEC or set up the dielectric case
+eps_r(circle) = 9; % assign the permittivity to the dielectric case
 
 % % Optional: check the geometry
 % figure();
@@ -181,18 +185,16 @@ eps_r(circle) = 9; % assign the permittivity to the circle
 %%% Excite the Problem %%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% source location
+%%% 1. SOURCE LOCATION %%%
 ps = imin - 1;  
 qs = 1:Ny;
 
-% tapered sinusoid
+%%% 2. TAPERED SINUSOID, MODULATED GAUSSIAN %%%
 f0 = 10e9; % frequency
 w0 = 2*pi*f0; % angular frequency
 sigma_t = 2/f0; % taper time constant
-
 tE = (0:Nt-1)*dt; % time vector, electric field reference
-
-tOffset = Nt/4*dt;
+tOffset = Nt/4*dt; % time offset
 
 ft = exp(-((tE-tOffset)/sigma_t).^2) .* cos(w0*tE); % excite with modulated Gaussian
 
@@ -428,27 +430,29 @@ end
 % xlabel("\phi (deg)");
 % ylabel("\sigma(\phi) (dBm)");
 
-%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Frequency Domain Solution %%%
-%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 tiledlayout(1, 3);
 
-% compute freq domain of field samples
+%%% 1. FREQUENCY DOMAIN TOTAL, INCIDENT, SCATTERED FIELDS %%%
 Ez_f = fftshift(fft(Ez, [], 3), 3);
-Ezi_f = fftshift(fft(Ei_z, [], 3), 3);
+Ezi_f = fftshift(fft(Ei_z, [], 3), 3); % incident
+
+mask = (X/dx >= imin-1 & X/dx < imax & Y/dy >= jmin-1 & Y/dy < jmax);
+Ezs_f = Ez_f - (mask.*Ezi_f); % scattered
+
+Ezt_f = Ezs_f + Ezi_f; % total
+
+%%% 2. PLOT %%%
+tiledlayout(1, 3);
 
 % incident field
 nexttile;
 imagesc(x, y, real(Ezi_f(:,:,findex)')); hold on;
-colormap magma;
-cl = 0.50*max(abs(real(Ezi_f(:,:,findex)')), [], 'all'); % more extreme color gradient for clear visual
-clim([-cl cl]);
-axis equal tight;
-title("Incident E_z");
+% Optional: Circular Scatterer
 plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
-
-plot(x_samp, y_samp, "g:");
 % Optional: Huygens surface
 rectangle('Position', [x(imin), y(jmin), x(imax)-x(imin), y(jmax)-y(jmin)], ...
     'EdgeColor', 'w', 'LineStyle', '--', 'LineWidth', 1.5);
@@ -456,21 +460,24 @@ rectangle('Position', [x(imin), y(jmin), x(imax)-x(imin), y(jmax)-y(jmin)], ...
 rectangle('Position', [x(PML_cells+1), y(PML_cells+1), ...
     x(Nx-PML_cells)-x(PML_cells+1), y(Ny-PML_cells)-y(PML_cells+1)], ...
     'EdgeColor', 'w', 'LineStyle', ':', 'LineWidth', 1.5);
+% axis & figure settings
+set(gca,'YDir','normal', 'TickLength', [0,0], 'FontName', 'Times', 'FontSize', 18);
+set(gcf, 'Color', 'w')
+axis image;
+% colorbar settings
+colormap magma;
+cl = 0.50*max(abs(real(Ezi_f(:,:,findex)')), [], 'all');
+clim([-cl cl]);
+% labeling
+title("Incident E_z");
+xlabel("x [m]")
+ylabel("y [m]")
 
 % scattered field
-mask = (X/dx >= imin-1 & X/dx < imax & Y/dy >= jmin-1 & Y/dy < jmax);
-Ez_f = Ez_f - (mask.*Ezi_f);
-
 nexttile;
-imagesc(x, y, real(Ez_f(:,:,findex)')); hold on;
-colormap magma;
-cl = 0.50*max(abs(real(Ez_f(:,:,findex)')), [], 'all'); % more extreme color gradient for clear visual
-clim([-cl cl]);
-axis equal tight;
-title("Scattered E_z");
+imagesc(x, y, real(Ezs_f(:,:,findex)')); hold on;
+% Optional: Circular Scatterer
 plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
-
-plot(x_samp, y_samp, "g:");
 % Optional: Huygens surface
 rectangle('Position', [x(imin), y(jmin), x(imax)-x(imin), y(jmax)-y(jmin)], ...
     'EdgeColor', 'w', 'LineStyle', '--', 'LineWidth', 1.5);
@@ -478,21 +485,24 @@ rectangle('Position', [x(imin), y(jmin), x(imax)-x(imin), y(jmax)-y(jmin)], ...
 rectangle('Position', [x(PML_cells+1), y(PML_cells+1), ...
     x(Nx-PML_cells)-x(PML_cells+1), y(Ny-PML_cells)-y(PML_cells+1)], ...
     'EdgeColor', 'w', 'LineStyle', ':', 'LineWidth', 1.5);
+% axis & figure settings
+set(gca,'YDir','normal', 'TickLength', [0,0], 'FontName', 'Times', 'FontSize', 18);
+set(gcf, 'Color', 'w')
+axis image;
+% colorbar settings
+colormap magma;
+cl = 0.50*max(abs(real(Ezs_f(:,:,findex)')), [], 'all');
+clim([-cl cl]);
+% labeling
+title("Scattered E_z");
+xlabel("x [m]")
+ylabel("y [m]")
 
 % total field
-Ez_t = Ez_f + Ezi_f;
 nexttile;
-imagesc(x, y, real(Ez_t(:,:,findex)')); hold on;
-c = colorbar;
-ylabel(c, "Re(E_z)");
-colormap magma;
-cl = 0.50*max(abs(real(Ez_t(:,:,findex)')), [], 'all'); % more extreme color gradient for clear visual
-clim([-cl cl]);
-axis equal tight;
-title("Total E_z");
+imagesc(x, y, real(Ezt_f(:,:,findex)')); hold on;
+% Optional: Circular Scatterer
 plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
-
-plot(x_samp, y_samp, "g:");
 % Optional: Huygens surface
 rectangle('Position', [x(imin), y(jmin), x(imax)-x(imin), y(jmax)-y(jmin)], ...
     'EdgeColor', 'w', 'LineStyle', '--', 'LineWidth', 1.5);
@@ -500,7 +510,19 @@ rectangle('Position', [x(imin), y(jmin), x(imax)-x(imin), y(jmax)-y(jmin)], ...
 rectangle('Position', [x(PML_cells+1), y(PML_cells+1), ...
     x(Nx-PML_cells)-x(PML_cells+1), y(Ny-PML_cells)-y(PML_cells+1)], ...
     'EdgeColor', 'w', 'LineStyle', ':', 'LineWidth', 1.5);
-
+% axis & figure settings
+set(gca,'YDir','normal', 'TickLength', [0,0], 'FontName', 'Times', 'FontSize', 18);
+set(gcf, 'Color', 'w')
+axis image;
+% colorbar settings
+colormap magma;
+cl = 0.50*max(abs(real(Ezt_f(:,:,findex)')), [], 'all');
+clim([-cl cl]);
+% labeling
+title("Total E_z");
+xlabel("x [m]")
+ylabel("y [m]")
+hold off;
 
 %%%%%%%%%%%%%%%%
 %%% Playback %%%
@@ -512,6 +534,8 @@ for h = 1:6:Nt
 
     % plot
     imagesc(x, y, Ez(:,:,h)'); hold on;
+
+    % Optional: Circular scatterer
     plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
 
     plot(x_samp, y_samp, "g:");
