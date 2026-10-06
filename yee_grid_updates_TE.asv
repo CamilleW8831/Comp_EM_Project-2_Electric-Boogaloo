@@ -13,21 +13,23 @@ eta0 = sqrt(mu0/eps0); % impedance of free space [ohms]
 %%% Spatial Indexing %%%
 %%%%%%%%%%%%%%%%%%%%%%%%
 
+%%% 1. SET UP GRID SPACING %%%
 grid_spacings = [32 20 16 12 8 5 3 2 1 0.5 0.3 0.25]*1e-3; % grid size convergence study
-PML_widths = [4 2 1 0.5 0.25 0.125 0.0625]*0.0150; % PML width convergence study
-pulse_width = [0.25 0.5 1 2 4 8]; % pulse width convergence study
-rmse_sigma_error = zeros(size(pulse_width));
+PML_widths = [8 2 1 0.5 0.25 0.125]*0.0150; % PML width convergence study
+%grid_spacings = 0.5*1e-3;
+rmse_sigma_error = zeros(size(PML_widths));
 
-for gridi = 1:numel(pulse_width)
-dx = 0.5e-3;
+for gridi = 1:numel(PML_widths)
+
+dx = grid_spacings(gridi);
 dy = dx;
-% dx = 2e-3; dy = dx; % spacing [m]
+dx = 1e-3; dy = dx; % spacing [m]
 
 %%% 2. PML INDICES AND SOLUTION AREA %%%
 problem_width = 0.08; % problem width excluding PML cells [m]
 
 PML_width = 0.0150; % width of PML region
-PML_cells = ceil(PML_width/dx); % number of cells corrsponding to PML width
+PML_cells = ceil(PML_width/dx); % number of cells corresponding to PML width
 PML_atten_dB = 80; % desired PML attenuation (dB)
 PML_order = 2; % polynomial order of PML tapering
 
@@ -71,29 +73,29 @@ y = (0:(Ny-1)) * dy; % vertical index, corresponding to the bottom corner
 %%%%%%%%%%%%%%%%%%%%%
 
 stability_factor = 0.9; % scale factor on CFL condition (<=1 is stable)
-
-% time step s.t. stability criterion is met:
+% time step s.t. stability criterion is met
 dt = stability_factor / (c * sqrt(1/dx^2 + 1/dy^2));
 
-Nt = 8000; % number of time steps
+Nt = 1000; % number of time steps
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Initialize the field and material values %%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%% Incident fields
-Ei_z = zeros(Nx, Ny, Nt); % E-field
-Ei_sx = zeros(Nx, Ny, Nt); % split E-field x component (PML)
-Ei_sy = zeros(Nx, Ny, Nt); % split E-field y component (PML)
+Hi_z = zeros(Nx, Ny, Nt); % H-field
+Hi_sx = zeros(Nx, Ny, Nt); % split H-field x component (PML)
+Hi_sy = zeros(Nx, Ny, Nt); % split H-field y component (PML)
 
-Hi_x = zeros(Nx, Ny, Nt); Hi_y = zeros(Nx, Ny, Nt); % H-field
+Ei_x = zeros(Nx, Ny, Nt); Ei_y = zeros(Nx, Ny, Nt); % E-field
 
 %%% Total fields
-Ez = zeros(Nx, Ny, Nt); % E-field
-Ez_sx = zeros(Nx, Ny, Nt); % split E-field x component (PML)
-Ez_sy = zeros(Nx, Ny, Nt); % split E-field y component (PML)
+Hz = zeros(Nx, Ny, Nt); % H-field
+Hz_sx = zeros(Nx, Ny, Nt); % split H-field x component (PML)
+Hz_sy = zeros(Nx, Ny, Nt); % split H-field y component (PML)
 
-Hx = zeros(Nx, Ny, Nt); Hy = zeros(Nx, Ny, Nt); % H-field
+Ex = zeros(Nx, Ny, Nt); Ey = zeros(Nx, Ny, Nt); % H-field
+% Jz = zeros(Nx, Ny, Nt); % Optional: current
 
 %%% Material values
 eps_r = ones(Nx, Ny); % permittivity 
@@ -104,7 +106,7 @@ mu_r = ones(Nx, Ny); % permeability
 %%%%%%%%%%%%%%%%%%%%%%%%%
 
 % compute maximum loss for desired attenuation
-sigma_max = -(PML_order+1)/(2*eta0*PML_width)*log(10^(-PML_atten_dB/20));
+sigma_max = -(PML_order+1)/(2*eta0*PML_width)*log(10^(-PML_atten_dB/20)) * mu0/eps0;
 
 % loss for x and y directed fields
 sigma_x = zeros(Nx, Ny);
@@ -145,10 +147,8 @@ sigma_y(PML_bottom) = sigma_max * ((PML_width-y(end)+Y(PML_bottom)) / PML_width)
 %%% Create Geometry %%%
 %%%%%%%%%%%%%%%%%%%%%%%
 
-doPEC = false;
-% Dielectric circle in the center:
-
-% Coordinates of approximately the center
+%%% 1. CREATE THE CIRCULAR MASK %%%
+% Coordinates of approximately the center of the solution domain
 x0 = x(floor(Nx/2));
 y0 = y(floor(Ny/2));
 
@@ -159,7 +159,13 @@ circle = (X-x0).^2 + (Y-y0).^2 <= R^2;
 
 %%% ASSSIGN DIELECTRIC OR PEC %%%
 doPEC = false; % choose the PEC or set up the dielectric case
-eps_r(circle) = 9; % assign the permittivity to the dielectric case
+Ex_PEC = (X-x0).^2 + (Y+dy/2-y0).^2 <= R^2;
+Ey_PEC = (X+dx/2-x0).^2 + (Y-y0).^2 <= R^2;
+if doPEC
+    eps_r(circle) = 1000;
+else
+    eps_r(circle) = 9; % assign the permittivity to the circle
+end
 
 % % Optional: check the geometry
 % figure();
@@ -193,8 +199,7 @@ qs = 1:Ny;
 %%% 2. TAPERED SINUSOID, MODULATED GAUSSIAN %%%
 f0 = 10e9; % frequency
 w0 = 2*pi*f0; % angular frequency
-sigma_t = pulse_width(gridi)/f0; % taper time constant
-
+sigma_t = 2/f0; % taper time constant
 tE = (0:Nt-1)*dt; % time vector, electric field reference
 tOffset = Nt/4*dt; % time offset
 
@@ -204,160 +209,171 @@ ft = exp(-((tE-tOffset)/sigma_t).^2) .* cos(w0*tE); % excite with modulated Gaus
 %%% Build/Update Equations %%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% these values are used in the update for Ez
-beta_x = eps0*eps_r/dt + sigma_x/2;
-beta_y = eps0*eps_r/dt + sigma_y/2;
+% these values are used in the update for Hz
+beta_x = mu0*mu_r/dt + sigma_x/2;
+beta_y = mu0*mu_r/dt + sigma_y/2;
 
-alpha_x = eps0*eps_r/dt - sigma_x/2;
-alpha_y = eps0*eps_r/dt - sigma_y/2;
+alpha_x = mu0*mu_r/dt - sigma_x/2;
+alpha_y = mu0*mu_r/dt - sigma_y/2;
 
 % vacuum coefficients for the incident grid
-beta0_x = eps0/dt + sigma_x/2;
-beta0_y = eps0/dt + sigma_y/2; 
+beta0_x = mu0/dt + sigma_x/2;
+beta0_y = mu0/dt + sigma_y/2; 
 
-alpha0_x = eps0/dt - sigma_x/2;
-alpha0_y = eps0/dt - sigma_y/2;
+alpha0_x = mu0/dt - sigma_x/2;
+alpha0_y = mu0/dt - sigma_y/2;
 
 wb = waitbar(0, 'Running FDTD');
 for h = 1:Nt-1 % Nt time steps
 
-    % Update Hx
+    % Update Ex
     for p = 1:Nx
         for q = 1:Ny-1
 
-            % Hx total
-            Hx(p,q,h+1) = (alpha_y(p,q) * Hx(p,q,h) - eps_r(p,q)*eps0/(mu0*mu_r(p,q)*dy) * ...
-                (Ez(p,q+1,h) - Ez(p,q,h))) / beta_y(p,q);
+            % Ex total
+            Ex(p,q,h+1) = (alpha_y(p,q) * Ex(p,q,h) + mu_r(p,q)*mu0/(eps0*eps_r(p,q)*dy) * ...
+                (Hz(p,q+1,h) - Hz(p,q,h))) / beta_y(p,q);
 
-            % Hx incident (in a vacuum)
-            Hi_x(p,q,h+1) = (alpha0_y(p,q) * Hi_x(p,q,h) - eps0/(mu0*dy) * ...
-                (Ei_z(p,q+1,h) - Ei_z(p,q,h))) / (beta0_y(p,q));
+            % Ex incident (in a vacuum)
+            Ei_x(p,q,h+1) = (alpha0_y(p,q) * Ei_x(p,q,h) + mu0/(eps0*dy) * ...
+                (Hi_z(p,q+1,h) - Hi_z(p,q,h))) / (beta0_y(p,q));
         end
     end
 
     % along the bottom edge of the surface whenever q = jmin-1, we will
-    % require the term Ez at (p, jmin). This term is corrected such that:
-    % Ez_new(p, jmin) = Ez_old(p, jmin) - Ei_z(p, jmin)
-    correction_jmin = eps_r(imin:imax,jmin-1).*eps0 ./ (mu0*mu_r(imin:imax,jmin-1)*dy) ...
-        .* Ei_z(imin:imax,jmin,h) ./ beta_y(imin:imax,jmin-1);
+    % require the term Hz at (p, jmin). This term is corrected such that:
+    % Hz_new(p, jmin) = Hz_old(p, jmin) - Hi_z(p, jmin)
+    correction_jmin = -mu_r(imin:imax,jmin-1).*mu0 ./ (eps0*eps_r(imin:imax,jmin-1)*dy) ...
+        .* Hi_z(imin:imax,jmin,h) ./ beta_y(imin:imax,jmin-1);
     %%%
     % apply the jmin correction
-    Hx(imin:imax,jmin-1,h+1) = Hx(imin:imax,jmin-1,h+1) + correction_jmin;
+    Ex(imin:imax,jmin-1,h+1) = Ex(imin:imax,jmin-1,h+1) + correction_jmin;
 
     % along the top edge of the surface whenever q = jmax, we will require
-    % the term Ez at (p, jmax). This term is corrected such that:
-    % Ez_new(p, jmax) = Ez_old(p, jmax) - Ei_z(p, jmax)
-    correction_jmax = -eps_r(imin:imax,jmax).*eps0 ./ (mu0*mu_r(imin:imax,jmax)*dy) ...
-        .* Ei_z(imin:imax,jmax,h) ./ beta_y(imin:imax,jmax);
+    % the term Hz at (p, jmax). This term is corrected such that:
+    % Hz_new(p, jmax) = Hz_old(p, jmax) - Hi_z(p, jmax)
+    correction_jmax = mu_r(imin:imax,jmax).*mu0 ./ (eps0*eps_r(imin:imax,jmax)*dy) ...
+        .* Hi_z(imin:imax,jmax,h) ./ beta_y(imin:imax,jmax);
     %%%
     % apply the jmax correction
-    Hx(imin:imax,jmax,h+1) = Hx(imin:imax,jmax,h+1) + correction_jmax;
+    Ex(imin:imax,jmax,h+1) = Ex(imin:imax,jmax,h+1) + correction_jmax;
 
-    % Update Hy
+    % Update Ey
     for p = 1:Nx-1
         for q = 1:Ny
 
-            % Hy total
-            Hy(p,q,h+1) = (alpha_x(p,q) * Hy(p,q,h) + eps_r(p,q)*eps0/(mu0*mu_r(p,q)*dx) * ...
-                (Ez(p+1,q,h) - Ez(p,q,h))) / beta_x(p,q);
+            % Ey total
+            Ey(p,q,h+1) = (alpha_x(p,q) * Ey(p,q,h) - mu_r(p,q)*mu0/(eps0*eps_r(p,q)*dx) * ...
+                (Hz(p+1,q,h) - Hz(p,q,h))) / beta_x(p,q);
         
-            % Hy incident (in a vacuum)
-            Hi_y(p,q,h+1) = (alpha0_x(p,q) * Hi_y(p,q,h) + eps0/(mu0*dx) * ...
-                (Ei_z(p+1,q,h) - Ei_z(p,q,h))) / beta0_x(p,q);
+            % Ey incident (in a vacuum)
+            Ei_y(p,q,h+1) = (alpha0_x(p,q) * Ei_y(p,q,h) - mu0/(eps0*dx) * ...
+                (Hi_z(p+1,q,h) - Hi_z(p,q,h))) / beta0_x(p,q);
         end
     end
 
+    if doPEC && false
+        % select the current time step of Ex and Ey
+        Ex_tan = Ex(:,:,h+1); Ey_tan = Ey(:,:,h+1);
+
+        Yc = Y - y0;
+        Xc = X - x0;
+        Ex_tan0 = Ex_tan.*(abs(Yc)./sqrt(Xc.^2 + Yc.^2));
+        Ey_tan0 = Ey_tan.*(abs(Xc)./sqrt(Xc.^2 + Yc.^2));
+        % Set the tangential E field values inside of the PEC = 0
+        Ex_tan(Ex_PEC) = Ex_tan0(Ex_PEC);
+        Ey_tan(Ex_PEC) = Ey_tan0(Ey_PEC);
+
+        Ex(:,:,h+1) = Ex_tan;
+        Ey(:,:,h+1) = Ey_tan;
+    end
+
     % along the left edge of the surface whenever p = imin-1, we will require
-    % the term Ez at (imin, q). This term is corrected such that:
-    % Ez_new(imin, q) = Ez_old(imin, q) - Ei_z(imin, q)
-    correction_imin = -eps_r(imin-1,jmin:jmax).*eps0 ./ (mu0*mu_r(imin-1,jmin:jmax)*dx) ...
-        .* Ei_z(imin,jmin:jmax,h) ./ beta_x(imin-1,jmin:jmax);
+    % the term Hz at (imin, q). This term is corrected such that:
+    % Hz_new(imin, q) = Hz_old(imin, q) - Hi_z(imin, q)
+    correction_imin = mu_r(imin-1,jmin:jmax).*mu0 ./ (eps0*eps_r(imin-1,jmin:jmax)*dx) ...
+        .* Hi_z(imin,jmin:jmax,h) ./ beta_x(imin-1,jmin:jmax);
     %%%
     % apply the imin correction
-    Hy(imin-1,jmin:jmax,h+1) = Hy(imin-1,jmin:jmax,h+1) + correction_imin;
+    Ey(imin-1,jmin:jmax,h+1) = Ey(imin-1,jmin:jmax,h+1) + correction_imin;
 
     % along the right edge of the surface whenever p = imax, we will require
-    % the term Ez at (imax, q). This term is corrected such that:
-    % Ez_new(imax, q) = Ez_old(imax, q) - Ei_z(imax, q)
-    correction_imax = eps_r(imax,jmin:jmax).*eps0 ./ (mu0*mu_r(imax,jmin:jmax)*dx) ...
-        .* Ei_z(imax,jmin:jmax,h) ./ beta_x(imax,jmin:jmax);
+    % the term Hz at (imax, q). This term is corrected such that:
+    % Hz_new(imax, q) = Hz_old(imax, q) - Hi_z(imax, q)
+    correction_imax = -mu_r(imax,jmin:jmax).*mu0 ./ (eps0*eps_r(imax,jmin:jmax)*dx) ...
+        .* Hi_z(imax,jmin:jmax,h) ./ beta_x(imax,jmin:jmax);
     %%%%
     % apply the imax correction
-    Hy(imax,jmin:jmax,h+1) = Hy(imax,jmin:jmax,h+1) + correction_imax;
+    Ey(imax,jmin:jmax,h+1) = Ey(imax,jmin:jmax,h+1) + correction_imax;
 
-    % Update Ez
+    % Update Hz
     for p = 2:Nx-1
         for q = 2:Ny-1
 
             %%%
-            % Ez total
-            Ez_sx(p,q,h+1) = (alpha_x(p,q) * Ez_sx(p,q,h) ...
-                + (Hy(p,q,h+1) - Hy(p-1,q,h+1))/dx) / beta_x(p,q);
+            % Hz total
+            Hz_sx(p,q,h+1) = (alpha_x(p,q) * Hz_sx(p,q,h) ...
+                + (Ey(p-1,q,h+1) - Ey(p,q,h+1))/dx) / beta_x(p,q);
 
-            Ez_sy(p,q,h+1) = (alpha_y(p,q) * Ez_sy(p,q,h) ...
-                - (Hx(p,q,h+1) - Hx(p,q-1,h+1))/dy) / beta_y(p,q);
+            Hz_sy(p,q,h+1) = (alpha_y(p,q) * Hz_sy(p,q,h) ...
+                - (Ex(p,q-1,h+1) - Ex(p,q,h+1))/dy) / beta_y(p,q);
         
-            % combine Ez total
-            Ez(p,q,h+1) = Ez_sx(p,q,h+1) + Ez_sy(p,q,h+1);
+            % combine Hz total
+            Hz(p,q,h+1) = Hz_sx(p,q,h+1) + Hz_sy(p,q,h+1);
 
             %%%
-            % Ez incident (vacuum)
-            Ei_sx(p,q,h+1) = (alpha0_x(p,q) * Ei_sx(p,q,h) ...
-                + (Hi_y(p,q,h+1) - Hi_y(p-1,q,h+1))/dx) / beta0_x(p,q);
+            % Hz incident (vacuum)
+            Hi_sx(p,q,h+1) = (alpha0_x(p,q) * Hi_sx(p,q,h) ...
+                + (Ei_y(p-1,q,h+1) - Ei_y(p,q,h+1))/dx) / beta0_x(p,q);
 
-            Ei_sy(p,q,h+1) = (alpha0_y(p,q) * Ei_sy(p,q,h) ...
-                - (Hi_x(p,q,h+1) - Hi_x(p,q-1,h+1))/dy) / beta0_y(p,q);
+            Hi_sy(p,q,h+1) = (alpha0_y(p,q) * Hi_sy(p,q,h) ...
+                - (Ei_x(p,q-1,h+1) - Ei_x(p,q,h+1))/dy) / beta0_y(p,q);
 
-            % combine Ez incident
-            Ei_z(p,q,h+1) = Ei_sx(p,q,h+1) + Ei_sy(p,q,h+1);
+            % combine Hz incident
+            Hi_z(p,q,h+1) = Hi_sx(p,q,h+1) + Hi_sy(p,q,h+1);
 
         end
     end
-    
-    if doPEC
-        Ez(:,:,h+1) = Ez(:,:,h+1) .* ~(circle);
-    end
 
     % along the left edge of the surface whenever p = imin, we will require
-    % the term Hy at (imin-1, q) for Ez_sx. This term is corrected such that:
-    % Hy_new(imin-1, q) = Hy_old(imin-1, q) + Hi_y(imin-1, q)
-    correction_Ez_imin = -Hi_y(imin-1,jmin:jmax,h+1) ./ (dx*beta_x(imin,jmin:jmax));
+    % the term Ey at (imin-1, q) for Hz_sx. This term is corrected such that:
+    % Ey_new(imin-1, q) = Ey_old(imin-1, q) + Ei_y(imin-1, q)
+    correction_Hz_imin = Ei_y(imin-1,jmin:jmax,h+1) ./ (dx*beta_x(imin,jmin:jmax));
     %%%
     % apply the imin correction
-    Ez_sx(imin,jmin:jmax,h+1) = Ez_sx(imin,jmin:jmax,h+1) + correction_Ez_imin;
-    Ez(imin,jmin:jmax,h+1) = Ez(imin,jmin:jmax,h+1) + correction_Ez_imin;
+    Hz_sx(imin,jmin:jmax,h+1) = Hz_sx(imin,jmin:jmax,h+1) + correction_Hz_imin;
+    Hz(imin,jmin:jmax,h+1) = Hz(imin,jmin:jmax,h+1) + correction_Hz_imin;
 
     % along the right edge of the surface whenever p = imax, we will require
-    % the term Hy at (imax, q) for Ez_sx. This term is corrected such that:
-    % Hy_new(imax, q) = Hy_old(imax, q) + Hi_y(imax, q)
-    correction_Ez_imax = Hi_y(imax,jmin:jmax,h+1) ./ (dx*beta_x(imax,jmin:jmax));
+    % the term Ey at (imax, q) for Hz_sx. This term is corrected such that:
+    % Ey_new(imax, q) = Ey_old(imax, q) + Ei_y(imax, q)
+    correction_Hz_imax = -Ei_y(imax,jmin:jmax,h+1) ./ (dx*beta_x(imax,jmin:jmax));
     %%%
     % apply the imax correction
-    Ez_sx(imax,jmin:jmax,h+1) = Ez_sx(imax,jmin:jmax,h+1) + correction_Ez_imax;
-    Ez(imax,jmin:jmax,h+1) = Ez(imax,jmin:jmax,h+1) + correction_Ez_imax;
+    Hz_sx(imax,jmin:jmax,h+1) = Hz_sx(imax,jmin:jmax,h+1) + correction_Hz_imax;
+    Hz(imax,jmin:jmax,h+1) = Hz(imax,jmin:jmax,h+1) + correction_Hz_imax;
 
     % along the bottom edge of the surface whenever q = jmin, we will require
-    % the term Hx at (p, jmin-1) for Ez_sy. This term is corrected such that:
-    % Hx_new(p, jmin-1) = Hx_old(p, jmin-1) + Hi_x(p, jmin-1)
-    correction_Ez_jmin = Hi_x(imin:imax,jmin-1,h+1) ./ (dy*beta_y(imin:imax,jmin));
+    % the term Ex at (p, jmin-1) for Hz_sy. This term is corrected such that:
+    % Ex_new(p, jmin-1) = Ex_old(p, jmin-1) + Ei_x(p, jmin-1)
+    correction_Hz_jmin = -Ei_x(imin:imax,jmin-1,h+1) ./ (dy*beta_y(imin:imax,jmin));
     %%%
     % apply the jmin correction
-    Ez_sy(imin:imax,jmin,h+1) = Ez_sy(imin:imax,jmin,h+1) + correction_Ez_jmin;
-    Ez(imin:imax,jmin,h+1) = Ez(imin:imax,jmin,h+1) + correction_Ez_jmin;
+    Hz_sy(imin:imax,jmin,h+1) = Hz_sy(imin:imax,jmin,h+1) + correction_Hz_jmin;
+    Hz(imin:imax,jmin,h+1) = Hz(imin:imax,jmin,h+1) + correction_Hz_jmin;
 
     % along the top edge of the surface whenever q = jmax, we will require
-    % the term Hx at (p, jmax) for for Ez_sy. This term is corrected such that:
-    % Hx_new(p, jmax) = Hx_old(p, jmax) + Hi_x(p, jmax)
-    correction_Ez_jmax = -Hi_x(imin:imax,jmax,h+1) ./ (dy*beta_y(imin:imax,jmax));
+    % the term Ex at (p, jmax) for for Hz_sy. This term is corrected such that:
+    % Ex_new(p, jmax) = Ex_old(p, jmax) + Ei_x(p, jmax)
+    correction_Hz_jmax = Ei_x(imin:imax,jmax,h+1) ./ (dy*beta_y(imin:imax,jmax));
     %%%
     % apply the jmax correction
-    Ez_sy(imin:imax,jmax,h+1) = Ez_sy(imin:imax,jmax,h+1) + correction_Ez_jmax;
-    Ez(imin:imax,jmax,h+1) = Ez(imin:imax,jmax,h+1) + correction_Ez_jmax;
+    Hz_sy(imin:imax,jmax,h+1) = Hz_sy(imin:imax,jmax,h+1) + correction_Hz_jmax;
+    Hz(imin:imax,jmax,h+1) = Hz(imin:imax,jmax,h+1) + correction_Hz_jmax;
 
-    % add the source term (only to the incident field)
-    Ei_sx(ps,qs,h+1) =  Ei_sx(ps,qs,h+1) + 0.5*ft(h+1);
-    Ei_sx(ps,qs,h+1) =  Ei_sx(ps,qs,h+1) + 0.5*ft(h+1);
-    Ei_z(ps,qs,h+1)  = Ei_sx(ps,qs,h+1) + Ei_sy(ps,qs,h+1);
+    % add the source term (only to the incident field, split evenly)
+    Hi_sx(ps,qs,h+1) = Hi_sx(ps,qs,h+1) + ft(h+1);
+    Hi_z(ps,qs,h+1)  = Hi_sx(ps,qs,h+1) + Hi_sy(ps,qs,h+1);
 
     if mod(h,20) == 0   % update in steps 
         waitbar(h/(Nt-1), wb, sprintf('Iterating: %.1f%%', 100*h/(Nt-1)));
@@ -382,20 +398,20 @@ phi_samp = linspace(0, 2*pi, NFFF_Npts);
 x_samp = NFFF_radius*cos(phi_samp)+x0;
 y_samp = NFFF_radius*sin(phi_samp)+y0;
 % construct appropriate arrays for interpolation over time simultaneously
-time_i = 1:size(Ez,3);
+time_i = 1:size(Hz,3);
 time_grid = reshape(time_i, 1, 1, Nt);
 time_shape = ones(1, 1, Nt);
 Xn = X .* time_shape;
 Yn = Y .* time_shape;
-Tn = ones(size(Ez,1), size(Ez,2)) .* time_grid;
-Xs = x_samp .* ones(size(Ez,3),1);
-Ys = y_samp .* ones(size(Ez,3),1);
+Tn = ones(size(Hz,1), size(Hz,2)) .* time_grid;
+Xs = x_samp .* ones(size(Hz,3),1);
+Ys = y_samp .* ones(size(Hz,3),1);
 Ts = time_i.' .* ones(1, NFFF_Npts);
 
-Ez_NF = interpn(Xn, Yn, Tn, Ez, Xs, Ys, Ts).';
+Hz_NF = interpn(Xn, Yn, Tn, Hz, Xs, Ys, Ts).';
 % convert sampled near fields to cylindrical harmonics and frequency domain
 % both conversions are done simultaneously through 2d fft
-NF_spectrum = fftshift(fft2(Ez_NF)) ./ numel(phi_samp);
+NF_spectrum = fftshift(fft2(Hz_NF)) ./ numel(phi_samp);
 % cylindrical harmonic index
 N = (-NFFF_Npts/2:NFFF_Npts/2-1);
 
@@ -414,26 +430,31 @@ FF_spectrum = H .* NF_spectrum;
 FF = ifft(ifftshift(FF_spectrum,1),[],1);
 FF = FF ./ abs(ft_freq);
 
-%%%%%%%%%%%%%%%%%
-%% Echo widths %%
-%%%%%%%%%%%%%%%%%
-
 % get index of closest computed frequency to f0
 [~, findex] = min(abs(F-f0));
 k0 = k_F(findex);
 % bistatic echo width (4*pi^2 corrects for FFT normalization)
 sigma_sim = 4*pi^2*abs(FF(:,findex)).^2;
 if doPEC
-    sigma_anal = bistatic_echo_width_tm_pec(phi_samp, k0, R);
+    sigma_anal = bistatic_echo_width_te_pec(phi_samp, k0, R);
 else
-    sigma_anal = bistatic_echo_width_tm_eps(phi_samp, k0, R, 9.0);
+    sigma_anal = bistatic_echo_width_te_eps(phi_samp, k0, R, 9.0);
 end
 % compute rmse error in echo width
 rmse_sigma = sqrt(sum((sigma_sim.' - sigma_anal).^2)) ./ sqrt(sum(sigma_anal.^2));
 rmse_sigma_error(gridi) = rmse_sigma;
+
+figure;
+plot(phi_samp*180/pi, 10*log10(sigma_sim)); hold on;
+plot(phi_samp*180/pi, 10*log10(sigma_anal));
+legend("Simulated", "Analytic");
+xlabel("\phi (deg)");
+ylabel("\sigma(\phi) (dBm)");
+xlim([0 360]);
+grid on;
 end
 
-save("tm_eps_pulse_width", "rmse_sigma_error", "pulse_width");
+save("te_eps_grid", "rmse_sigma_error", "grid_spacings");
 
 % plot broadband monostatic echo width
 figure;
@@ -443,9 +464,9 @@ k_range = (2*pi*9e9/c):1:(2*pi*11e9/c);
 [~, phi_index] = min(abs(phi_samp-pi));
 monosigma_sim = 4*pi^2*abs(FF(phi_index, flow:fhigh)).^2;
 if doPEC
-    monosigma_anal = arrayfun(@(k) bistatic_echo_width_tm_pec(phi_samp(phi_index), k, R), k_range);
+    monosigma_anal = arrayfun(@(k) bistatic_echo_width_te_pec(phi_samp(phi_index), k, R), k_range);
 else
-    monosigma_anal = arrayfun(@(k) bistatic_echo_width_tm_eps(phi_samp(phi_index), k, R, 9.0), k_range);
+    monosigma_anal = arrayfun(@(k) bistatic_echo_width_te_eps(phi_samp(phi_index), k, R, 9.0), k_range);
 end
 plot(F(flow:fhigh)/1e9, 10*log10(abs(monosigma_sim)));
 hold on;
@@ -456,19 +477,6 @@ xlim([9 11]);
 grid on;
 legend("Simulated", "Analytic");
 
-
-% plot bistatic echo width
-figure;
-plot(phi_samp*180/pi, 10*log10(sigma_sim)); hold on;
-plot(phi_samp*180/pi, 10*log10(sigma_anal));
-legend("Simulated", "Analytic");
-xlabel("\phi (deg)");
-ylabel("\sigma(\phi) (dBm)");
-grid on;
-xlim([0 360]);
-
-%save("tm_eps_grid", "grid_spacings", "rmse_sigma_error");
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Frequency Domain Solution %%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -477,20 +485,20 @@ figure;
 tiledlayout(1, 3);
 
 %%% 1. FREQUENCY DOMAIN TOTAL, INCIDENT, SCATTERED FIELDS %%%
-Ez_f = fftshift(fft(Ez, [], 3), 3);
-Ezi_f = fftshift(fft(Ei_z, [], 3), 3); % incident
+Hz_f = fftshift(fft(Hz, [], 3), 3);
+Hzi_f = fftshift(fft(Hi_z, [], 3), 3); % incident
 
 mask = (X/dx >= imin-1 & X/dx < imax & Y/dy >= jmin-1 & Y/dy < jmax);
-Ezs_f = Ez_f - (mask.*Ezi_f); % scattered
+Hzs_f = Hz_f - (mask.*Hzi_f); % scattered
 
-Ezt_f = Ezs_f + Ezi_f; % total
+Hzt_f = Hzs_f + Hzi_f; % total
 
 %%% 2. PLOT %%%
 tiledlayout(1, 3);
 
 % incident field
 nexttile;
-imagesc(x, y, real(Ezi_f(:,:,findex)')); hold on;
+imagesc(x, y, real(Hzi_f(:,:,findex)')); hold on;
 % Optional: Circular Scatterer
 plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
 % Optional: Huygens surface
@@ -506,16 +514,16 @@ set(gcf, 'Color', 'w')
 axis image;
 % colorbar settings
 colormap magma;
-cl = 0.50*max(abs(real(Ezi_f(:,:,findex)')), [], 'all');
+cl = 0.50*max(abs(real(Hzi_f(:,:,findex)')), [], 'all');
 clim([-cl cl]);
 % labeling
-title("Incident E_z");
+title("Incident H_z");
 xlabel("x [m]")
 ylabel("y [m]")
 
 % scattered field
 nexttile;
-imagesc(x, y, real(Ezs_f(:,:,findex)')); hold on;
+imagesc(x, y, real(Hzs_f(:,:,findex)')); hold on;
 % Optional: Circular Scatterer
 plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
 % Optional: Huygens surface
@@ -531,16 +539,16 @@ set(gcf, 'Color', 'w')
 axis image;
 % colorbar settings
 colormap magma;
-cl = 0.50*max(abs(real(Ezs_f(:,:,findex)')), [], 'all');
+cl = 0.50*max(abs(real(Hzs_f(:,:,findex)')), [], 'all');
 clim([-cl cl]);
 % labeling
-title("Scattered E_z");
+title("Scattered H_z");
 xlabel("x [m]")
 ylabel("y [m]")
 
 % total field
 nexttile;
-imagesc(x, y, real(Ezt_f(:,:,findex)')); hold on;
+imagesc(x, y, real(Hzt_f(:,:,findex)')); hold on;
 % Optional: Circular Scatterer
 plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
 % Optional: Huygens surface
@@ -556,10 +564,10 @@ set(gcf, 'Color', 'w')
 axis image;
 % colorbar settings
 colormap magma;
-cl = 0.50*max(abs(real(Ezt_f(:,:,findex)')), [], 'all');
+cl = 0.50*max(abs(real(Hzt_f(:,:,findex)')), [], 'all');
 clim([-cl cl]);
 % labeling
-title("Total E_z");
+title("Total H_z");
 xlabel("x [m]")
 ylabel("y [m]")
 hold off;
@@ -574,7 +582,7 @@ for h = 1:6:Nt
 
     % plot
     figure(h1);
-    imagesc(x, y, Ez(:,:,h)'); hold on;
+    imagesc(x, y, Hz(:,:,h)'); hold on;
 
     % Optional: Circular scatterer
     plot(x0 + R*cos(linspace(0,2*pi,300)), y0 + R*sin(linspace(0,2*pi,300)), 'k', 'LineWidth', 1.5);
@@ -596,7 +604,7 @@ for h = 1:6:Nt
     % colorbar settings
     colorbar;
     colormap magma;
-    cl = 0.50*max(abs(Ez(:))); % more extreme color gradient for clear visual
+    cl = 0.50*max(abs(Hz(:))); % more extreme color gradient for clear visual
     clim([-cl cl]);
 
     % axis & figure settings
@@ -605,7 +613,7 @@ for h = 1:6:Nt
     axis image;
 
     % labeling
-    title("E [V/m] at t = " + round((h-1)*dt*1e9) + " ns"); 
+    title("H [A/m] at t = " + round((h-1)*dt*1e9) + " ns"); 
     xlabel("x [m]")
     ylabel("y [m]")
 

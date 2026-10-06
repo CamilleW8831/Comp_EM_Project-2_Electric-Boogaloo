@@ -14,15 +14,13 @@ eta0 = sqrt(mu0/eps0); % impedance of free space [ohms]
 %%%%%%%%%%%%%%%%%%%%%%%%
 
 %%% 1. SET UP GRID SPACING %%%
-% grid_spacings = [32 20 16 12 8 5 3 2 1 0.5 0.3 0.25]*1e-3; % grid size convergence study
-grid_spacings = 0.5*1e-3;
-rmse_sigma_error = zeros(size(grid_spacings));
+grid_spacings = [32 20 16 12 8 5 3 2 1 0.5 0.3 0.25]*1e-3; % grid size convergence study
+PML_widths = [4 2 1 0.5 0.25 0.125 0.0625]*0.0150; % PML width convergence study
+pulse_width = [0.25 0.5 1 2 4 8]; % pulse width convergence study
+rmse_sigma_error = zeros(size(pulse_width));
 
-for gridi = 1:numel(grid_spacings)
-
-dx = grid_spacings(gridi);
-dy = dx;
-% dx = 2e-3; dy = dx; % spacing [m]
+for gridi = 1:numel(pulse_width)
+dx = 0.5e-3; dy = dx; % spacing [m]
 
 %%% 2. PML INDICES AND SOLUTION AREA %%%
 problem_width = 0.08; % problem width excluding PML cells [m]
@@ -75,7 +73,7 @@ stability_factor = 0.9; % scale factor on CFL condition (<=1 is stable)
 % time step s.t. stability criterion is met
 dt = stability_factor / (c * sqrt(1/dx^2 + 1/dy^2));
 
-Nt = 500; % number of time steps
+Nt = 4000; % number of time steps
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Initialize the field and material values %%%
@@ -162,6 +160,7 @@ Ex_PEC = (X-x0).^2 + (Y+dy/2-y0).^2 <= R^2;
 Ey_PEC = (X+dx/2-x0).^2 + (Y-y0).^2 <= R^2;
 eps_r(circle) = 9; % assign the permittivity to the circle
 
+
 % % Optional: check the geometry
 % figure();
 % imagesc(x, y, eps_r');
@@ -194,7 +193,7 @@ qs = 1:Ny;
 %%% 2. TAPERED SINUSOID, MODULATED GAUSSIAN %%%
 f0 = 10e9; % frequency
 w0 = 2*pi*f0; % angular frequency
-sigma_t = 2/f0; % taper time constant
+sigma_t = pulse_width(gridi)/f0; % taper time constant
 tE = (0:Nt-1)*dt; % time vector, electric field reference
 tOffset = Nt/4*dt; % time offset
 
@@ -267,6 +266,23 @@ for h = 1:Nt-1 % Nt time steps
         end
     end
 
+    if doPEC
+        % select the current time step of Ex and Ey
+        Ex_tan = Ex(:,:,h+1); Ey_tan = Ey(:,:,h+1);
+
+        Yc = Y - y0;
+        Xc = X - x0;
+        % project E field onto tangential direction of surface
+        Ex_tan0 = Ex_tan.*(abs(Yc)./sqrt(Xc.^2 + Yc.^2));
+        Ey_tan0 = Ey_tan.*(abs(Xc)./sqrt(Xc.^2 + Yc.^2));
+        % Set the tangential E field values inside of the PEC = 0
+        Ex_tan(Ex_PEC) = Ex_tan0(Ex_PEC);
+        Ey_tan(Ex_PEC) = Ey_tan0(Ey_PEC);
+
+        Ex(:,:,h+1) = Ex_tan;
+        Ey(:,:,h+1) = Ey_tan;
+    end
+
     % along the left edge of the surface whenever p = imin-1, we will require
     % the term Hz at (imin, q). This term is corrected such that:
     % Hz_new(imin, q) = Hz_old(imin, q) - Hi_z(imin, q)
@@ -284,15 +300,6 @@ for h = 1:Nt-1 % Nt time steps
     %%%%
     % apply the imax correction
     Ey(imax,jmin:jmax,h+1) = Ey(imax,jmin:jmax,h+1) + correction_imax;
-
-    % select the current time step of Ex and Ey
-    Ex_tan = Ex(:,:,h+1); Ey_tan = Ey(:,:,h+1);
-
-    if doPEC
-        % Set the values inside of the PEC = 0
-        Ex_tan(Ex_PEC) = 0; Ex(:,:,h+1) = Ex_tan;
-        Ey_tan(Ey_PEC) = 0;  Ey(:,:,h+1) = Ey_tan;
-    end
 
     % Update Hz
     for p = 2:Nx-1
@@ -423,23 +430,53 @@ FF = FF ./ abs(ft_freq);
 k0 = k_F(findex);
 % bistatic echo width (4*pi^2 corrects for FFT normalization)
 sigma_sim = 4*pi^2*abs(FF(:,findex)).^2;
-sigma_anal = bistatic_echo_width_tm_pec(phi_samp, k0, R);
+if doPEC
+    sigma_anal = bistatic_echo_width_te_pec(phi_samp, k0, R);
+else
+    sigma_anal = bistatic_echo_width_te_eps(phi_samp, k0, R, 9.0);
+end
 % compute rmse error in echo width
 rmse_sigma = sqrt(sum((sigma_sim.' - sigma_anal).^2)) ./ sqrt(sum(sigma_anal.^2));
 rmse_sigma_error(gridi) = rmse_sigma;
 
-% figure;
-% plot(phi_samp*180/pi, 10*log10(sigma_sim)); hold on;
-% plot(phi_samp*180/pi, 10*log10(sigma_ana));
-% legend("Simulated", "Analytic");
-% xlabel("\phi (deg)");
-% ylabel("\sigma(\phi) (dBm)");
+figure;
+plot(phi_samp*180/pi, 10*log10(sigma_sim)); hold on;
+plot(phi_samp*180/pi, 10*log10(sigma_anal));
+legend("Simulated", "Analytic");
+xlabel("\phi (deg)");
+ylabel("\sigma(\phi) (dBm)");
+xlim([0 360]);
+grid on;
 end
+
+save("te_eps_pulse_width", "rmse_sigma_error", "pulse_width");
+
+% plot broadband monostatic echo width
+figure;
+[~, flow] = min(abs(F-9e9));
+[~, fhigh] = min(abs(F-11e9));
+k_range = (2*pi*9e9/c):1:(2*pi*11e9/c);
+[~, phi_index] = min(abs(phi_samp-pi));
+monosigma_sim = 4*pi^2*abs(FF(phi_index, flow:fhigh)).^2;
+if doPEC
+    monosigma_anal = arrayfun(@(k) bistatic_echo_width_te_pec(phi_samp(phi_index), k, R), k_range);
+else
+    monosigma_anal = arrayfun(@(k) bistatic_echo_width_te_eps(phi_samp(phi_index), k, R, 9.0), k_range);
+end
+plot(F(flow:fhigh)/1e9, 10*log10(abs(monosigma_sim)));
+hold on;
+plot(k_range*c/2/pi/1e9, 10*log10(abs(monosigma_anal)));
+xlabel("Frequency (GHz)");
+ylabel("\sigma(\phi = \phi_{inc}-\pi) (dBm)");
+xlim([9 11]);
+grid on;
+legend("Simulated", "Analytic");
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Frequency Domain Solution %%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+figure;
 tiledlayout(1, 3);
 
 %%% 1. FREQUENCY DOMAIN TOTAL, INCIDENT, SCATTERED FIELDS %%%

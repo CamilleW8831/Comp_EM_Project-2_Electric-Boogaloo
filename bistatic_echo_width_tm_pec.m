@@ -1,6 +1,6 @@
 function sigma = bistatic_echo_width_tm_pec(phi, k, a)
     % truncation order of series
-    N = 80;
+    N = 50;
     n = -N:1:N;
     sigma = zeros(size(phi));
 
